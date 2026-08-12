@@ -88,8 +88,9 @@ herdr classifies agent state itself as one of `working`, `idle`, `blocked`,
 
 ## 4. Architecture
 
-New repository `simensollie/aw-watcher-herdr`. Python 3.10+, dependencies
-`aw-client` and `tomli` only. No `pyobjc`.
+New repository `simensollie/aw-watcher-herdr`. Python 3.10+, with `aw-client` as
+the only runtime dependency — it brings `aw-core`, which supplies `Event`,
+`load_config_toml` and `setup_logging`. No `pyobjc`.
 
 ```
 aw_watcher_herdr/
