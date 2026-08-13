@@ -5,14 +5,24 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
+import signal
+import socket as socketlib
 import sys
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
+from aw_client import ActivityWatchClient
 from aw_core.config import load_config_toml
+from aw_core.dirs import get_data_dir
+from aw_core.log import setup_logging
 
 from . import __version__
-from .herdr import DEFAULT_HERDR_BINARY
-from .state import DEFAULT_FLEET_STATUSES
+from . import main as loop
+from .emit import AttentionWriter, FleetWriter
+from .herdr import DEFAULT_HERDR_BINARY, HerdrUnavailable, resolve_source
+from .lock import AlreadyRunning, single_instance
+from .state import DEFAULT_FLEET_STATUSES, FleetTracker
 
 logger = logging.getLogger(__name__)
 
@@ -149,9 +159,101 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+def lock_path(testing: bool = False) -> str:
+    """Where the single-instance lock lives (spec §10.3).
+
+    A --testing run uses a distinct file so it never contends with an
+    installed production watcher: without this, `--testing` would fail with
+    AlreadyRunning the moment the real LaunchAgent is installed. The two
+    instances also target different aw-server ports (5666 vs the default),
+    so they cannot double-count even while both hold their own lock.
+    """
+    name = "watcher-testing.lock" if testing else "watcher.lock"
+    return os.path.join(get_data_dir(CLIENT_NAME), name)
+
+
+def run_snapshot(config: Config) -> int:
+    """Print herdr's live snapshot as JSON (for capturing test fixtures).
+
+    Remember to replace real workspace names with synthetic ones before
+    committing anything derived from this.
+    """
+    try:
+        snap = resolve_source(config).snapshot()
+    except HerdrUnavailable as exc:
+        print(f"herdr is not running: {exc}")
+        return 1
+    print(json.dumps(snap, ensure_ascii=False, indent=2))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    load_config(args)
+    config = load_config(args)
+
+    # One-shot diagnostic mode prints to stdout and exits; handle it before
+    # setup_logging so it doesn't spin up a rotating log file.
+    if args.snapshot:
+        return run_snapshot(config)
+
+    setup_logging(CLIENT_NAME, testing=args.testing, verbose=args.verbose,
+                  log_stderr=True, log_file=True)
+
+    try:
+        lock = single_instance(lock_path(args.testing))
+        lock.__enter__()
+    except AlreadyRunning as exc:
+        # Both launchd and aw-qt can start this watcher; two copies would
+        # silently double the fleet bucket (spec §10.3).
+        logger.error("%s", exc)
+        print(f"aw-watcher-herdr: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        client = ActivityWatchClient(CLIENT_NAME, testing=args.testing)
+        hostname = client.client_hostname or socketlib.gethostname()
+        suffix = "-testing" if args.testing else ""
+        attention_bucket = f"{CLIENT_NAME}_{hostname}{suffix}"
+        fleet_bucket = f"{CLIENT_NAME}-agents_{hostname}{suffix}"
+
+        # currentwindow reuses aw's window-activity views and categorization (§5).
+        client.create_bucket(attention_bucket, event_type="currentwindow",
+                             queued=True)
+        if config.fleet_enabled:
+            client.create_bucket(fleet_bucket, event_type="app.agent.activity",
+                                 queued=True)
+
+        source = resolve_source(config)
+        logger.info("reading herdr via %s", type(source).__name__)
+        tracker = FleetTracker(statuses=config.fleet_statuses,
+                               max_run_seconds=config.max_run_seconds)
+        attention_writer = AttentionWriter(client, attention_bucket,
+                                           config.pulsetime,
+                                           config.generic_terminal_label)
+        fleet_writer = FleetWriter(client, fleet_bucket)
+
+        # SIGTERM (launchd or aw-qt stop) must close open runs, or their
+        # intervals are lost.
+        stopping = {"flag": False}
+
+        def _stop(_signum, _frame):
+            stopping["flag"] = True
+
+        signal.signal(signal.SIGTERM, _stop)
+
+        with client:
+            try:
+                loop.run(source, attention_writer, fleet_writer, tracker,
+                         config, stop=lambda: stopping["flag"])
+            except KeyboardInterrupt:
+                logger.info("interrupted; shutting down")
+            finally:
+                if config.fleet_enabled:
+                    fleet_writer.write(
+                        tracker.close_all(datetime.now(timezone.utc)))
+                    fleet_writer.flush()
+    finally:
+        lock.__exit__(None, None, None)
     return 0
 
 
