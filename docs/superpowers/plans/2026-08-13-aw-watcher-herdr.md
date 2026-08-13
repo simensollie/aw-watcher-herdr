@@ -1906,14 +1906,14 @@ git commit -m "feat(emit): heartbeat attention writer + buffered overlapping fle
   - `main.run(source, attention_writer, fleet_writer, tracker, config, stop=None) -> None`
   - `__main__.lock_path() -> str`
 
-- [ ] **Step 1: Confirm the aw-core directory helper exists**
+- [x] **Step 1: Confirm the aw-core directory helper exists**
 
 ```bash
 .venv/bin/python -c "from aw_core.dirs import get_data_dir; print(get_data_dir('aw-watcher-herdr'))"
 ```
 Expected: prints a path under the ActivityWatch data directory. If this raises `ImportError`, use `aw_core.dirs.get_cache_dir` instead and adjust `lock_path()` in Step 7 accordingly — the lock only needs a stable, user-writable directory.
 
-- [ ] **Step 2: Write the failing lock tests**
+- [x] **Step 2: Write the failing lock tests**
 
 Create `tests/test_lock.py`:
 
@@ -1981,12 +1981,12 @@ def test_missing_parent_directory_is_created(tmp_path):
         pass
 ```
 
-- [ ] **Step 3: Run the lock tests to verify they fail**
+- [x] **Step 3: Run the lock tests to verify they fail**
 
 Run: `.venv/bin/pytest tests/test_lock.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'aw_watcher_herdr.lock'`.
 
-- [ ] **Step 4: Write `lock.py`**
+- [x] **Step 4: Write `lock.py`**
 
 Create `aw_watcher_herdr/lock.py`:
 
@@ -2054,12 +2054,12 @@ def single_instance(path: str):
         handle.close()
 ```
 
-- [ ] **Step 5: Run the lock tests to verify they pass**
+- [x] **Step 5: Run the lock tests to verify they pass**
 
 Run: `.venv/bin/pytest tests/test_lock.py -v`
 Expected: PASS (5 passed).
 
-- [ ] **Step 6: Write the failing loop tests**
+- [x] **Step 6: Write the failing loop tests**
 
 Create `tests/test_loop.py`:
 
@@ -2221,12 +2221,12 @@ def test_sleep_gap_closes_open_runs_at_the_last_good_poll(monkeypatch):
     assert all(r.duration_seconds <= 60 for r in fleet.runs)
 ```
 
-- [ ] **Step 7: Run the loop tests to verify they fail**
+- [x] **Step 7: Run the loop tests to verify they fail**
 
 Run: `.venv/bin/pytest tests/test_loop.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'aw_watcher_herdr.main'`.
 
-- [ ] **Step 8: Write `main.py`**
+- [x] **Step 8: Write `main.py`**
 
 Create `aw_watcher_herdr/main.py`:
 
@@ -2327,12 +2327,12 @@ def run(source, attention_writer, fleet_writer, tracker, config,
         last_poll = now
 ```
 
-- [ ] **Step 9: Run the loop tests to verify they pass**
+- [x] **Step 9: Run the loop tests to verify they pass**
 
 Run: `.venv/bin/pytest tests/test_loop.py -v`
 Expected: PASS (7 passed).
 
-- [ ] **Step 10: Wire up `__main__.py`**
+- [x] **Step 10: Wire up `__main__.py`**
 
 In `aw_watcher_herdr/__main__.py`, replace the import block written in Task 1 with:
 
@@ -2458,12 +2458,12 @@ def main(argv: list[str] | None = None) -> int:
 The lock is entered manually rather than with a `with` statement so that
 `AlreadyRunning` can be turned into a clean exit code instead of a traceback.
 
-- [ ] **Step 11: Run the full suite**
+- [x] **Step 11: Run the full suite**
 
 Run: `.venv/bin/pytest -q`
 Expected: PASS (config + herdr + attention + fleet + emit + lock + loop).
 
-- [ ] **Step 12: Verify `--snapshot` against live herdr, on both sources**
+- [x] **Step 12: Verify `--snapshot` against live herdr, on both sources**
 
 ```bash
 .venv/bin/python -m aw_watcher_herdr --snapshot | head -3
@@ -2471,7 +2471,7 @@ Expected: PASS (config + herdr + attention + fleet + emit + lock + loop).
 ```
 Expected: both print JSON beginning with `{` and containing `"protocol"`.
 
-- [ ] **Step 13: Verify the lock refuses a second instance**
+- [x] **Step 13: Verify the lock refuses a second instance**
 
 ```bash
 .venv/bin/python -m aw_watcher_herdr --testing --poll-interval 5 &
@@ -2482,7 +2482,7 @@ kill $FIRST
 ```
 Expected: the second invocation prints `already running` and reports `second exit: 1`.
 
-- [ ] **Step 14: Commit**
+- [x] **Step 14: Commit**
 
 ```bash
 git add aw_watcher_herdr/lock.py aw_watcher_herdr/main.py aw_watcher_herdr/__main__.py tests/test_lock.py tests/test_loop.py
