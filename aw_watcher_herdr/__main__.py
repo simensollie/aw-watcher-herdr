@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 from dataclasses import dataclass, field
@@ -10,16 +11,19 @@ from dataclasses import dataclass, field
 from aw_core.config import load_config_toml
 
 from . import __version__
+from .herdr import DEFAULT_HERDR_BINARY
+from .state import DEFAULT_FLEET_STATUSES
 
 logger = logging.getLogger(__name__)
 
 CLIENT_NAME = "aw-watcher-herdr"
 
 DEFAULT_GENERIC_LABEL = "terminal"
-DEFAULT_FLEET_STATUSES = ["working", "blocked", "done"]
-DEFAULT_HERDR_BINARY = "herdr"
 
 # Default config rendered into the user's toml on first run (aw-core convention).
+# Every live key here is merged over the dataclass defaults by load_config_toml,
+# so a key whose default is platform-specific (window_app) must stay commented
+# out or it would force one platform's value onto all of them.
 DEFAULT_CONFIG = f"""
 [{CLIENT_NAME}]
 source = "auto"                # auto | socket | cli
@@ -28,11 +32,11 @@ poll_interval = 2.0
 pulsetime = 5.0
 generic_terminal_label = "{DEFAULT_GENERIC_LABEL}"
 fleet_enabled = true
-fleet_statuses = ["working", "blocked", "done"]
+fleet_statuses = {json.dumps(list(DEFAULT_FLEET_STATUSES))}
 max_run_seconds = 43200.0
 gap_factor = 3.0
 # Terminal app names for the gating query. Run --detect-terminal to find yours.
-window_app = ["Ghostty"]
+# window_app = ["Ghostty"]
 # window_title = "herdr"
 # socket_path = "~/.config/herdr/herdr.sock"   # defaults to that path
 """.strip()

@@ -29,6 +29,19 @@ def test_window_apps_default_is_platform_specific(monkeypatch):
     assert cli.default_window_apps() == []
 
 
+def test_window_app_absent_from_the_file_keeps_the_platform_default(monkeypatch):
+    # load_config_toml merges every LIVE key of DEFAULT_CONFIG over the file, so
+    # a live `window_app` line there would force ["Ghostty"] onto Linux and
+    # Windows too. It must stay commented out.
+    assert not any(line.startswith("window_app")
+                   for line in cli.DEFAULT_CONFIG.splitlines())
+    monkeypatch.setattr(cli.sys, "platform", "linux")
+    monkeypatch.setattr(cli, "load_config_toml", lambda *a, **k: {
+        "aw-watcher-herdr": {"poll_interval": 2.0}
+    })
+    assert cli.load_config(cli.parse_args([])).window_app == []
+
+
 def test_file_values_applied(monkeypatch):
     monkeypatch.setattr(cli, "load_config_toml", lambda *a, **k: {
         "aw-watcher-herdr": {

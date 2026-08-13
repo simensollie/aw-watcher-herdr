@@ -25,3 +25,4 @@ Task 3: implemented (commits cecea6a..546f41a, 18/18 passing, full suite 47 pass
 Task 3: complete (rounds: 0, spec PASS, quality APPROVED, suite 47 passed in 1.58s)
 Task 4: implemented (commits 042e757..c71b2d9, 17/17 passing, full suite 64 passed)
 Task 4: complete (rounds: 0, spec PASS, quality APPROVED, suite 64 passed in 1.68s)
+Preflight remediation: rulings 1 (herdr.py docstring), 2 (window_app commented out in DEFAULT_CONFIG + covering test), 7 (DEFAULT_HERDR_BINARY owned by herdr.py, DEFAULT_FLEET_STATUSES owned by state.py, __main__ imports both), 9 (plan table row corrected to 2 agents, fixture test now asserts pane_id w2:p1) applied to tasks 1-4, plus the three deferred minors (__init__ future import, herdr.py em dashes in code and plan, dead logger removed). Suite 65 passed in 2.53s. Evidence: remediation-report.md

@@ -6,7 +6,7 @@ Protocol behaviours encoded here, each verified against herdr 0.8.0
   * `params` is REQUIRED on every socket request, even when the method takes
     none. Omitting it gets `invalid_request: missing field 'params'`.
   * The server answers exactly ONE request per connection and then closes it.
-    Every socket call therefore opens a fresh connection — which conveniently
+    Every socket call therefore opens a fresh connection, which conveniently
     makes reconnect-after-failure the normal path rather than a special case.
   * Errors come back as {"id": "", "error": {"code": ..., "message": ...}}.
   * `herdr api snapshot` returns the identical envelope, and exits 1 with
@@ -18,22 +18,19 @@ and no macOS Accessibility permission are needed.
 Two transports exist because herdr uses a Unix domain socket on macOS and Linux
 but a named pipe on Windows, where CPython exposes no socket.AF_UNIX. The CLI
 wrapper is the route herdr's own documentation recommends for plugins there.
-This module is the only place in the package that branches on the platform for
-transport purposes. Spec §4.3 permits exactly two others: lock.py and
-__main__.default_window_apps().
+This module holds the only platform branch in the data path. Spec §4.3 permits
+two further sites: lock.py, and __main__.default_window_apps() as the third,
+which picks a display default rather than a transport.
 """
 
 from __future__ import annotations
 
 import json
-import logging
 import os
 import socket
 import subprocess
 import sys
 from typing import Protocol
-
-logger = logging.getLogger(__name__)
 
 DEFAULT_SOCKET_PATH = "~/.config/herdr/herdr.sock"
 DEFAULT_HERDR_BINARY = "herdr"
@@ -127,7 +124,7 @@ class UnixSocketSource:
         try:
             sock.connect(self.socket_path)
         except OSError as exc:
-            # Covers FileNotFoundError, ConnectionRefusedError and timeouts —
+            # Covers FileNotFoundError, ConnectionRefusedError and timeouts,
             # all of which mean "herdr isn't there", not "herdr is broken".
             sock.close()
             raise HerdrUnavailable(

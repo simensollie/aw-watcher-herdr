@@ -56,7 +56,7 @@ overlapping intervals.
 | `tests/test_herdr.py` | both sources against fakes | create | 2 |
 | `aw_watcher_herdr/state.py` | pure: `clean_title`, `Attention`, `extract_attention` | create | 3 |
 | `aw_watcher_herdr/state.py` | pure: `RunKey`, `CompletedRun`, `FleetTracker` | extend | 4 |
-| `tests/fixtures/snapshot_basic.json` | 3 workspaces, 3 agents, mixed statuses | create | 3 |
+| `tests/fixtures/snapshot_basic.json` | 3 workspaces, 2 agents, mixed statuses | create | 3 |
 | `tests/fixtures/snapshot_no_focus.json` | nothing focused | create | 3 |
 | `tests/test_state_attention.py` | attention extraction + glyph strip | create | 3 |
 | `tests/test_state_fleet.py` | run lifecycle table tests | create | 4 |
@@ -722,7 +722,7 @@ Protocol behaviours encoded here, each verified against herdr 0.8.0
   * `params` is REQUIRED on every socket request, even when the method takes
     none. Omitting it gets `invalid_request: missing field 'params'`.
   * The server answers exactly ONE request per connection and then closes it.
-    Every socket call therefore opens a fresh connection — which conveniently
+    Every socket call therefore opens a fresh connection, which conveniently
     makes reconnect-after-failure the normal path rather than a special case.
   * Errors come back as {"id": "", "error": {"code": ..., "message": ...}}.
   * `herdr api snapshot` returns the identical envelope, and exits 1 with
@@ -843,7 +843,7 @@ class UnixSocketSource:
         try:
             sock.connect(self.socket_path)
         except OSError as exc:
-            # Covers FileNotFoundError, ConnectionRefusedError and timeouts —
+            # Covers FileNotFoundError, ConnectionRefusedError and timeouts,
             # all of which mean "herdr isn't there", not "herdr is broken".
             sock.close()
             raise HerdrUnavailable(

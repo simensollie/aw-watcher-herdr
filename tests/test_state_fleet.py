@@ -185,7 +185,10 @@ def test_completed_run_duration_is_seconds():
 
 
 def test_real_fixture_opens_only_the_working_agent():
-    # snapshot_basic.json has one working and one idle agent.
+    # snapshot_basic.json has two agents: w2:p1 working and w3:p1 idle.
     t = FleetTracker()
     t.update(load(), T0)
     assert t.open_count == 1
+    # Pin the identity too, so a future fixture edit fails here loudly instead
+    # of quietly leaving the count right for the wrong reason.
+    assert [c.key.pane_id for c in t.close_all(at(30))] == ["w2:p1"]
