@@ -2843,7 +2843,7 @@ git commit -m "feat(query): --detect-terminal and --print-query diagnostics"
 - Consumes: the `aw-watcher-herdr` console script from Task 1's `pyproject.toml`.
 - Produces: no Python interfaces.
 
-- [ ] **Step 1: Write the installer**
+- [x] **Step 1: Write the installer**
 
 Create `scripts/install.sh` (then `chmod +x scripts/install.sh`):
 
@@ -2957,7 +2957,7 @@ Uninstall: scripts/uninstall.sh
 EOF
 ```
 
-- [ ] **Step 2: Write the uninstaller**
+- [x] **Step 2: Write the uninstaller**
 
 Create `scripts/uninstall.sh` (then `chmod +x scripts/uninstall.sh`):
 
@@ -2999,7 +2999,7 @@ from aw-qt.toml.
 EOF
 ```
 
-- [ ] **Step 3: Write the end-to-end verify script**
+- [x] **Step 3: Write the end-to-end verify script**
 
 Create `scripts/verify.sh` (then `chmod +x scripts/verify.sh`):
 
@@ -3101,7 +3101,7 @@ else
 fi
 ```
 
-- [ ] **Step 4: Write the plist template, config example, and Makefile**
+- [x] **Step 4: Write the plist template, config example, and Makefile**
 
 Create `packaging/com.activitywatch.aw-watcher-herdr.plist`:
 
@@ -3223,7 +3223,7 @@ clean:
 	find . -name __pycache__ -type d -exec rm -rf {} +
 ```
 
-- [ ] **Step 5: Write the README**
+- [x] **Step 5: Write the README**
 
 Replace `README.md` entirely:
 
@@ -3477,7 +3477,7 @@ equivalent job for cmux and is maintained separately.
 [MPL-2.0](LICENSE), matching the ActivityWatch ecosystem.
 ````
 
-- [ ] **Step 6: Make the scripts executable and run the full suite**
+- [x] **Step 6: Make the scripts executable and run the full suite**
 
 ```bash
 chmod +x scripts/install.sh scripts/uninstall.sh scripts/verify.sh
@@ -3485,7 +3485,7 @@ chmod +x scripts/install.sh scripts/uninstall.sh scripts/verify.sh
 ```
 Expected: PASS.
 
-- [ ] **Step 7: Run the end-to-end verification on both transports**
+- [x] **Step 7: Run the end-to-end verification on both transports**
 
 ```bash
 PY=.venv/bin/python DURATION=8 scripts/verify.sh
@@ -3493,7 +3493,7 @@ PY=.venv/bin/python DURATION=8 SOURCE=cli scripts/verify.sh
 ```
 Expected: `PASS.` with a non-zero attention event count, both times. A fleet count of 0 is acceptable if no agent happened to be working during the window; to exercise it, start an agent in herdr and re-run.
 
-- [ ] **Step 8: Mark the spec implemented and commit**
+- [x] **Step 8: Mark the spec implemented and commit**
 
 In `docs/superpowers/specs/2026-08-12-herdr-activitywatch-watcher-design.md`, change `**Status:** Approved (brainstorm)` to `**Status:** Implemented`.
 
@@ -3502,7 +3502,7 @@ git add scripts/ packaging/ Makefile README.md aw-watcher-herdr.toml.example doc
 git commit -m "feat: launchd installer, aw-qt install path, verify script, and docs"
 ```
 
-- [ ] **Step 9: Install for real and confirm it records**
+- [x] **Step 9: Install for real and confirm it records**
 
 ```bash
 ./scripts/install.sh
