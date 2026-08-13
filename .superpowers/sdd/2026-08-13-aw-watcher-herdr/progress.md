@@ -21,3 +21,5 @@ Task 2: implemented (commits baddd29..ef83aa4, 29 passed in 1.49s)
 Task 2: complete (rounds: 0, spec PASS, quality APPROVED, suite 29 passed in 1.59s)
 Task 2: minor (deferred): aw_watcher_herdr/herdr.py:9,130 Two em dashes appear in module comments ("opens a fresh connection — which conveniently" and "ConnectionRefusedError and timeouts —"), violating the plan's global constraint 'No em dashes in prose.' The implementer transcribed the brief's code byte-for-byte (verified via diff against the brief), so this originates in the plan's own code block, not from the implementer's own writing.
 Task 2: minor (deferred): aw_watcher_herdr/herdr.py:36 `logger = logging.getLogger(__name__)` is declared at module level but never used anywhere in the file (no logger.debug/info/warning/error call exists). Dead code, present verbatim in the brief's code block, so it is plan-mandated rather than an implementer addition.
+Task 3: implemented (commits cecea6a..546f41a, 18/18 passing, full suite 47 passed)
+Task 3: complete (rounds: 0, spec PASS, quality APPROVED, suite 47 passed in 1.58s)

@@ -962,7 +962,7 @@ git commit -m "feat(herdr): socket and CLI snapshot sources behind one interface
 - Consumes: nothing (pure functions over plain dicts).
 - Produces: `clean_title(title: str | None) -> str | None`, `workspace_labels(snapshot: dict) -> dict[str, str]`, frozen dataclass `Attention(workspace_label: str, workspace_id: str, pane_id: str | None, title: str | None, agent: str | None, agent_status: str | None)`, and `extract_attention(snapshot: dict) -> Attention | None`.
 
-- [ ] **Step 1: Create the main fixture**
+- [x] **Step 1: Create the main fixture**
 
 Create `tests/fixtures/snapshot_basic.json`. This mirrors the real snapshot shape exactly, with synthetic names. Note the deliberate variety: `w1` has a pane with **no** `agent` key and status `unknown`; `w2` has a working agent whose title keeps its `◐` glyph (herdr does not strip that one); `w3` is focused and idle with a `✳` title that herdr already stripped.
 
@@ -1022,7 +1022,7 @@ Create `tests/fixtures/snapshot_basic.json`. This mirrors the real snapshot shap
 }
 ```
 
-- [ ] **Step 2: Create the no-focus fixture**
+- [x] **Step 2: Create the no-focus fixture**
 
 Create `tests/fixtures/snapshot_no_focus.json`:
 
@@ -1041,7 +1041,7 @@ Create `tests/fixtures/snapshot_no_focus.json`:
 }
 ```
 
-- [ ] **Step 3: Write the failing attention tests**
+- [x] **Step 3: Write the failing attention tests**
 
 Create `tests/test_state_attention.py`:
 
@@ -1149,12 +1149,12 @@ def test_empty_label_is_treated_as_missing():
     assert extract_attention(snap) is None
 ```
 
-- [ ] **Step 4: Run the tests to verify they fail**
+- [x] **Step 4: Run the tests to verify they fail**
 
 Run: `.venv/bin/pytest tests/test_state_attention.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'aw_watcher_herdr.state'`.
 
-- [ ] **Step 5: Write the attention half of `state.py`**
+- [x] **Step 5: Write the attention half of `state.py`**
 
 Create `aw_watcher_herdr/state.py`:
 
@@ -1247,12 +1247,12 @@ def extract_attention(snapshot: dict) -> Attention | None:
     )
 ```
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 Run: `.venv/bin/pytest tests/test_state_attention.py -v`
 Expected: PASS (18 passed).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add aw_watcher_herdr/state.py tests/test_state_attention.py tests/fixtures/
