@@ -5,15 +5,16 @@
 [aw-watcher-herdr]
 # How to reach herdr: "auto" uses the Unix socket on macOS/Linux and the
 # `herdr api snapshot` CLI on Windows, where herdr uses a named pipe.
-source = "auto"
+source = "auto"                # nothing but auto, socket or cli is accepted
 
-# Socket source only. Defaults to ~/.config/herdr/herdr.sock.
+# Socket source only. Defaults to ~/.config/herdr/herdr.sock, and a leading
+# ~ is expanded here too.
 # socket_path = "~/.config/herdr/herdr.sock"
 
 # CLI source only: the herdr executable to invoke.
 herdr_binary = "herdr"
 
-poll_interval = 2.0            # seconds between snapshots
+poll_interval = 2.0            # seconds between snapshots, must be > 0
 pulsetime = 5.0                # heartbeat merge window (attention bucket)
 generic_terminal_label = "terminal"   # title for panes with no agent
 

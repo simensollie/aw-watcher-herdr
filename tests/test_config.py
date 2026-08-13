@@ -115,13 +115,52 @@ def test_unset_flags_do_not_override_file(monkeypatch):
     assert cfg.fleet_enabled is False
 
 
-def test_poll_interval_zero_is_honored(monkeypatch):
-    # `is not None` guard: an explicit 0 must not be dropped by truthiness.
+def test_explicit_zero_flag_is_not_dropped_by_truthiness(monkeypatch):
+    # The `is not None` guard, tested on a value that is falsy but legal:
+    # pulsetime 0 means "do not merge heartbeats" and must override the file.
+    # (poll_interval 0 used to serve this purpose; it is now rejected outright,
+    # see test_poll_interval_zero_is_rejected.)
     monkeypatch.setattr(cli, "load_config_toml", lambda *a, **k: {
-        "aw-watcher-herdr": {"poll_interval": 2.0}
+        "aw-watcher-herdr": {"pulsetime": 9.0}
     })
-    cfg = cli.load_config(cli.parse_args(["--poll-interval", "0"]))
-    assert cfg.poll_interval == 0.0
+    cfg = cli.load_config(cli.parse_args(["--pulsetime", "0"]))
+    assert cfg.pulsetime == 0.0
+
+
+# --- validation -------------------------------------------------------------
+
+def test_poll_interval_zero_is_rejected(monkeypatch):
+    # At 0 the loop calls time.sleep(0) and spins: a pinned core hammering
+    # herdr's API thousands of times a second, and gap_threshold becomes 0,
+    # which silently disables sleep/suspend detection (it is guarded by
+    # gap_threshold > 0). Reject it rather than clamp it silently.
+    monkeypatch.setattr(cli, "load_config_toml", lambda *a, **k: {})
+    with pytest.raises(cli.ConfigError) as exc:
+        cli.load_config(cli.parse_args(["--poll-interval", "0"]))
+    assert "poll_interval" in str(exc.value)
+
+
+@pytest.mark.parametrize("value", [0.0, -1.0])
+def test_non_positive_poll_interval_in_the_file_is_rejected(monkeypatch, value):
+    monkeypatch.setattr(cli, "load_config_toml", lambda *a, **k: {
+        "aw-watcher-herdr": {"poll_interval": value}
+    })
+    with pytest.raises(cli.ConfigError):
+        cli.load_config(cli.parse_args([]))
+
+
+def test_non_numeric_poll_interval_in_the_file_is_rejected(monkeypatch):
+    monkeypatch.setattr(cli, "load_config_toml", lambda *a, **k: {
+        "aw-watcher-herdr": {"poll_interval": "soon"}
+    })
+    with pytest.raises(cli.ConfigError):
+        cli.load_config(cli.parse_args([]))
+
+
+def test_a_small_positive_poll_interval_is_still_allowed(monkeypatch):
+    monkeypatch.setattr(cli, "load_config_toml", lambda *a, **k: {})
+    cfg = cli.load_config(cli.parse_args(["--poll-interval", "0.25"]))
+    assert cfg.poll_interval == 0.25
 
 
 def test_source_flag_rejects_unknown_values():
@@ -129,3 +168,38 @@ def test_source_flag_rejects_unknown_values():
     # ten minutes into a poll loop.
     with pytest.raises(SystemExit):
         cli.parse_args(["--source", "carrier-pigeon"])
+
+
+def test_unknown_source_in_the_file_is_rejected(monkeypatch):
+    # The FLAG was guarded by argparse but the FILE value was copied straight
+    # out of the toml, so a typo there crashed the daemon inside resolve_source
+    # instead of reporting a config error.
+    monkeypatch.setattr(cli, "load_config_toml", lambda *a, **k: {
+        "aw-watcher-herdr": {"source": "carrier-pigeon"}
+    })
+    with pytest.raises(cli.ConfigError) as exc:
+        cli.load_config(cli.parse_args([]))
+    message = str(exc.value)
+    assert "carrier-pigeon" in message
+    for choice in cli.SOURCE_CHOICES:
+        assert choice in message
+
+
+def test_a_valid_source_in_the_file_is_accepted(monkeypatch):
+    monkeypatch.setattr(cli, "load_config_toml", lambda *a, **k: {
+        "aw-watcher-herdr": {"source": "cli"}
+    })
+    assert cli.load_config(cli.parse_args([])).source == "cli"
+
+
+def test_a_flag_can_repair_a_broken_file_value(monkeypatch):
+    monkeypatch.setattr(cli, "load_config_toml", lambda *a, **k: {
+        "aw-watcher-herdr": {"source": "carrier-pigeon", "poll_interval": 0}
+    })
+    cfg = cli.load_config(cli.parse_args(
+        ["--source", "cli", "--poll-interval", "2"]))
+    assert cfg.source == "cli" and cfg.poll_interval == 2.0
+
+
+# main()'s handling of a ConfigError lives in test_main.py, where every side
+# effect of main() is replaced by a fake.

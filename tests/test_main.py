@@ -14,8 +14,10 @@ Everything I/O-bound is replaced with a fake, so no aw-server, no herdr, no
 socket and no real data directory are involved.
 """
 import pytest
+import requests
 
 from aw_watcher_herdr import __main__ as cli
+from aw_watcher_herdr.herdr import HerdrError
 from aw_watcher_herdr.lock import AlreadyRunning
 
 HOST = "test-host"
@@ -232,3 +234,111 @@ def test_no_fleet_skips_the_shutdown_flush(wired):
     assert cli.main(["--no-fleet"]) == 0
     assert wired["trackers"][0].closed_at == []
     assert wired["fleet_writers"][0].flushes == 0
+
+
+# --- config errors ----------------------------------------------------------
+
+def test_a_config_error_is_reported_and_exits_two(wired, monkeypatch, capsys):
+    # An unknown source in the FILE used to crash the daemon inside
+    # resolve_source, after the buckets had already been created.
+    monkeypatch.setattr(cli, "load_config_toml", lambda *a, **k: {
+        "aw-watcher-herdr": {"source": "carrier-pigeon"}
+    })
+    assert cli.main([]) == 2
+    err = capsys.readouterr().err
+    assert "carrier-pigeon" in err
+    assert "Traceback" not in err
+    # Nothing may be started on the way out: no client, no buckets, no loop.
+    assert wired["clients"] == []
+    assert wired["calls"]["run"] == 0
+
+
+def test_a_non_positive_poll_interval_exits_two(wired, capsys):
+    assert cli.main(["--poll-interval", "0"]) == 2
+    assert "poll_interval" in capsys.readouterr().err
+    assert wired["calls"]["run"] == 0
+
+
+# --- diagnostics with no aw-server ------------------------------------------
+#
+# aw-server not running is the common first-run state, so a diagnostic must say
+# so in one line instead of printing a requests traceback.
+
+class UnreachableClient:
+    """An ActivityWatchClient whose every call fails as if nothing listens."""
+
+    server_address = "http://localhost:5666"
+
+    def __init__(self, client_name, testing=False):
+        pass
+
+    def get_buckets(self):
+        raise requests.ConnectionError(
+            "HTTPConnectionPool(host='localhost', port=5666): "
+            "Max retries exceeded")
+
+    def get_events(self, bucket_id, start=None, end=None, limit=-1):
+        raise requests.ConnectionError("Max retries exceeded")
+
+
+def test_detect_terminal_reports_an_unreachable_server(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "ActivityWatchClient", UnreachableClient)
+    assert cli.run_detect_terminal(cli.Config(), testing=True) == 1
+    out = capsys.readouterr()
+    combined = out.out + out.err
+    assert "Traceback" not in combined
+    assert "ActivityWatch" in combined
+    assert "localhost:5666" in combined
+
+
+def test_detect_terminal_reports_a_failure_while_reading_events(monkeypatch,
+                                                                capsys):
+    class BucketsButNoEvents(UnreachableClient):
+        client_hostname = "synthetic-host"
+
+        def get_buckets(self):
+            return {"aw-watcher-window_synthetic-host": {
+                "hostname": "synthetic-host",
+                "last_updated": "2026-08-13T11:21:58+00:00"}}
+
+    monkeypatch.setattr(cli, "ActivityWatchClient", BucketsButNoEvents)
+    assert cli.run_detect_terminal(cli.Config(), testing=True) == 1
+    out = capsys.readouterr()
+    assert "Traceback" not in out.out + out.err
+
+
+def test_detect_terminal_reports_an_unreachable_server_at_construction(
+        monkeypatch, capsys):
+    class RefusingConstructor:
+        def __init__(self, client_name, testing=False):
+            raise requests.ConnectionError("Max retries exceeded")
+
+    monkeypatch.setattr(cli, "ActivityWatchClient", RefusingConstructor)
+    assert cli.run_detect_terminal(cli.Config(), testing=True) == 1
+    assert "Traceback" not in capsys.readouterr().err
+
+
+def test_print_query_needs_no_server(monkeypatch, capsys):
+    # The other diagnostic: it must not acquire a client at all, so it cannot
+    # share the hazard.
+    def explode(*a, **k):
+        raise AssertionError("--print-query must not contact aw-server")
+
+    monkeypatch.setattr(cli, "ActivityWatchClient", explode)
+    assert cli.run_print_query(cli.Config()) == 0
+    assert "find_bucket" in capsys.readouterr().out
+
+
+def test_snapshot_reports_a_herdr_protocol_error_without_a_traceback(
+        monkeypatch, capsys):
+    # --snapshot already handled HerdrUnavailable; a protocol-level HerdrError
+    # escaped as a traceback.
+    class Boom:
+        def snapshot(self):
+            raise HerdrError("session.snapshot: invalid_request: boom")
+
+    monkeypatch.setattr(cli, "resolve_source", lambda config: Boom())
+    assert cli.run_snapshot(cli.Config()) == 1
+    out = capsys.readouterr()
+    assert "Traceback" not in out.out + out.err
+    assert "boom" in out.out + out.err

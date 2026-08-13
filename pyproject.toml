@@ -22,6 +22,9 @@ dependencies = [
     # >=0.5.13 for client_hostname and queued heartbeat/create_bucket support.
     # Brings aw-core (Event, load_config_toml, setup_logging) with it.
     "aw-client>=0.5.13",
+    # aw-client's own HTTP transport. Declared because __main__ imports
+    # RequestException directly to report "aw-server is not running".
+    "requests",
 ]
 
 [project.optional-dependencies]

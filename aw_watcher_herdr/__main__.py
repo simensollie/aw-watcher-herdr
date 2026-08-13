@@ -16,12 +16,16 @@ from aw_client import ActivityWatchClient
 from aw_core.config import load_config_toml
 from aw_core.dirs import get_data_dir
 from aw_core.log import setup_logging
+# aw-client speaks HTTP through requests, so its transport errors surface here.
+from requests import RequestException
 
 from . import __version__
 from . import main as loop
 from . import query
 from .emit import AttentionWriter, FleetWriter
-from .herdr import DEFAULT_HERDR_BINARY, HerdrUnavailable, resolve_source
+from .herdr import (
+    DEFAULT_HERDR_BINARY, HerdrError, HerdrUnavailable, resolve_source,
+)
 from .lock import AlreadyRunning, single_instance
 from .state import DEFAULT_FLEET_STATUSES, FleetTracker
 
@@ -37,9 +41,9 @@ DEFAULT_GENERIC_LABEL = "terminal"
 # out or it would force one platform's value onto all of them.
 DEFAULT_CONFIG = f"""
 [{CLIENT_NAME}]
-source = "auto"                # auto | socket | cli
+source = "auto"                # auto | socket | cli (nothing else)
 herdr_binary = "{DEFAULT_HERDR_BINARY}"
-poll_interval = 2.0
+poll_interval = 2.0            # seconds between snapshots, must be > 0
 pulsetime = 5.0
 generic_terminal_label = "{DEFAULT_GENERIC_LABEL}"
 fleet_enabled = true
@@ -59,6 +63,15 @@ _FILE_KEYS = (
 )
 
 SOURCE_CHOICES = ("auto", "socket", "cli")
+
+
+class ConfigError(Exception):
+    """A config value is unusable, from the file or from a flag.
+
+    Raised rather than clamped: silently repairing a value the user wrote is
+    how a watcher ends up measuring something nobody asked for. main() prints
+    it and exits 2, the same status argparse uses for a bad flag.
+    """
 
 
 def default_window_apps() -> list[str]:
@@ -128,7 +141,37 @@ def load_config(args: argparse.Namespace) -> Config:
         cfg.generic_terminal_label = args.generic_terminal_label
     if args.fleet_enabled is not None:
         cfg.fleet_enabled = args.fleet_enabled
+
+    _validate(cfg)
     return cfg
+
+
+def _validate(cfg: Config) -> None:
+    """Reject unusable values, wherever they came from.
+
+    The --source FLAG is guarded by argparse's choices, but the FILE value was
+    copied straight out of the toml, so a typo there crashed the daemon inside
+    resolve_source instead of reporting a config error. poll_interval had no
+    floor at all: at 0 the loop calls time.sleep(0) and spins, pinning a core
+    and hammering herdr's API, and gap_threshold becomes 0, which silently
+    disables sleep/suspend detection (it is guarded by gap_threshold > 0).
+    """
+    if cfg.source not in SOURCE_CHOICES:
+        raise ConfigError(
+            f"source: {cfg.source!r} is not a valid source; expected one of "
+            f"{', '.join(SOURCE_CHOICES)}")
+
+    try:
+        poll_interval = float(cfg.poll_interval)
+    except (TypeError, ValueError):
+        raise ConfigError(
+            f"poll_interval: {cfg.poll_interval!r} is not a number") from None
+    if poll_interval <= 0:
+        raise ConfigError(
+            f"poll_interval must be greater than 0 seconds (got "
+            f"{cfg.poll_interval!r}); 0 would spin the poll loop and disable "
+            f"sleep/suspend detection")
+    cfg.poll_interval = poll_interval
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -191,8 +234,28 @@ def run_snapshot(config: Config) -> int:
     except HerdrUnavailable as exc:
         print(f"herdr is not running: {exc}")
         return 1
+    except HerdrError as exc:
+        # A protocol-level failure is a diagnostic result, not a crash: this
+        # command is what a user runs to find out what is wrong.
+        print(f"{CLIENT_NAME}: herdr returned no usable snapshot: {exc}",
+              file=sys.stderr)
+        return 1
     print(json.dumps(snap, ensure_ascii=False, indent=2))
     return 0
+
+
+def _unreachable_server_message(client, testing: bool, exc: Exception) -> str:
+    """One actionable line for "aw-server is not running", the first-run state.
+
+    `client` may be None: ActivityWatchClient's constructor can itself fail, and
+    only it knows the configured address, hence the default-port fallback.
+    """
+    address = getattr(client, "server_address", None) or (
+        "http://localhost:5666" if testing else "http://localhost:5600")
+    server = "aw-server --testing" if testing else "aw-server"
+    return (f"{CLIENT_NAME}: cannot read from ActivityWatch at {address} "
+            f"({exc.__class__.__name__}: {exc}).\n"
+            f"Start ActivityWatch (or `{server}`) and try again.")
 
 
 def run_detect_terminal(config: Config, testing: bool) -> int:
@@ -209,16 +272,28 @@ def run_detect_terminal(config: Config, testing: bool) -> int:
     identity) did not account for this separate single-instance file lock, so
     it is overridden here; flagging back to the controller for that ruling to
     be revisited.
+
+    Every HTTP call here can fail with aw-server simply not running, which is
+    the common first-run state, so RequestException is reported as one
+    actionable line instead of a traceback. --print-query needs no client at
+    all, so it cannot share the hazard.
     """
-    client = ActivityWatchClient(f"{CLIENT_NAME}-detect", testing=testing)
-    bucket_id = query.window_bucket_id(client)
+    client = None
+    try:
+        client = ActivityWatchClient(f"{CLIENT_NAME}-detect", testing=testing)
+        bucket_id = query.window_bucket_id(client)
+        rows = query.top_window_apps(client, bucket_id, hours=24) \
+            if bucket_id is not None else []
+    except RequestException as exc:
+        print(_unreachable_server_message(client, testing, exc), file=sys.stderr)
+        return 1
+
     if bucket_id is None:
         print("No aw-watcher-window bucket found. Start ActivityWatch's window "
               "watcher first.\nOn Linux/Wayland use aw-watcher-window-wayland "
               "or awatcher; the stock watcher is X11 only.")
         return 1
 
-    rows = query.top_window_apps(client, bucket_id, hours=24)
     if not rows:
         print(f"{bucket_id} has no events in the last 24 hours.")
         return 1
@@ -260,7 +335,13 @@ def run_print_query(config: Config) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    config = load_config(args)
+    try:
+        config = load_config(args)
+    except ConfigError as exc:
+        # Exit 2, matching argparse's status for a bad flag: an unusable config
+        # file is the same class of mistake, just written down somewhere else.
+        print(f"{CLIENT_NAME}: {exc}", file=sys.stderr)
+        return 2
 
     # One-shot diagnostic modes print to stdout and exit.
     if args.snapshot:

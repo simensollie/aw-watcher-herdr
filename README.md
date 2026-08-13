@@ -215,10 +215,10 @@ override the file.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `source` | `auto` | `auto`, `socket` or `cli` |
-| `socket_path` | `~/.config/herdr/herdr.sock` | herdr API socket (socket source) |
+| `source` | `auto` | `auto`, `socket` or `cli`; anything else is a config error |
+| `socket_path` | `~/.config/herdr/herdr.sock` | herdr API socket (socket source); a leading `~` is expanded |
 | `herdr_binary` | `herdr` | Executable invoked by the CLI source |
-| `poll_interval` | `2.0` | Seconds between snapshots |
+| `poll_interval` | `2.0` | Seconds between snapshots; must be greater than 0 |
 | `pulsetime` | `5.0` | Heartbeat merge window (attention bucket) |
 | `generic_terminal_label` | `terminal` | Title for panes with no agent |
 | `fleet_enabled` | `true` | Emit the agent-fleet bucket at all |
