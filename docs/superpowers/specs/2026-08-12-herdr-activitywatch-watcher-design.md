@@ -1,6 +1,6 @@
 # aw-watcher-herdr — Design
 
-**Status:** Approved (brainstorm)
+**Status:** Implemented
 **Date:** 2026-08-12, amended 2026-08-13
 **Supersedes (in spirit):** `simensollie/aw-watcher-cmux` — that repo remains
 untouched and installable for cmux users. This is a separate project, not a port.
