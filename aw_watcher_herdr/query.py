@@ -36,6 +36,13 @@ def _last_updated(metadata) -> datetime:
     """
     value = (metadata or {}).get("last_updated")
     if isinstance(value, str):
+        # Python 3.10 is the declared floor and its fromisoformat rejects a
+        # trailing `Z`, which aw-server's REST API may serve. Unnormalized,
+        # every candidate would fall back to the epoch and window_bucket_id
+        # would silently reinstate the stale-bucket bug it exists to prevent.
+        # scripts/verify.sh normalizes the same way.
+        if value.endswith("Z"):
+            value = value[:-1] + "+00:00"
         try:
             value = datetime.fromisoformat(value)
         except ValueError:

@@ -5,9 +5,12 @@ config keys into working features: one reads the user's real terminal name out
 of their own window bucket, the other renders a pasteable query from it.
 """
 import re
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
+
+import pytest
 
 from aw_watcher_herdr import __main__ as cli
+from aw_watcher_herdr import query as query_module
 from aw_watcher_herdr.query import (
     local_hostname, render_attention_query, render_fleet_query,
     top_window_apps, window_bucket_id,
@@ -157,6 +160,66 @@ def test_window_bucket_falls_back_to_the_most_recently_updated_match():
             "hostname": "other-host", "last_updated": "2026-06-04T09:23:13+00:00"},
     })
     assert window_bucket_id(client) == "aw-watcher-window_other-host"
+
+
+class Py310Datetime(datetime):
+    """datetime whose fromisoformat behaves as it did on Python 3.10.
+
+    pyproject declares requires-python = ">=3.10", and only 3.11 taught
+    fromisoformat to accept a trailing `Z`. Tests run on a newer interpreter,
+    where the leniency hides the bug, so the floor is simulated here.
+    """
+
+    @classmethod
+    def fromisoformat(cls, value):
+        if isinstance(value, str) and value.endswith("Z"):
+            raise ValueError(f"Invalid isoformat string: {value!r}")
+        return super().fromisoformat(value)
+
+
+@pytest.fixture
+def python310_isoformat(monkeypatch):
+    monkeypatch.setattr(query_module, "datetime", Py310Datetime)
+
+
+def test_last_updated_accepts_a_trailing_z(python310_isoformat):
+    # aw-server's REST API may serve UTC as `...Z`. Unhandled, every candidate
+    # falls back to the epoch and window_bucket_id reinstates the stale-bucket
+    # bug its docstring says it prevents. scripts/verify.sh already normalizes
+    # the same way.
+    assert query_module._last_updated({"last_updated": "2026-06-04T09:23:13Z"}) \
+        == datetime(2026, 6, 4, 9, 23, 13, tzinfo=timezone.utc)
+
+
+def test_window_bucket_picks_the_freshest_when_last_updated_ends_in_z(
+        python310_isoformat):
+    # No bucket carries this hostname, so the last_updated ordering decides and
+    # the stale bucket is deliberately listed first.
+    client = FakeClient(buckets={
+        "aw-watcher-window_old-host.lan": {
+            "hostname": "old-host.lan", "last_updated": "2026-05-27T21:56:41Z"},
+        "aw-watcher-window_other-host": {
+            "hostname": "other-host", "last_updated": "2026-06-04T09:23:13Z"},
+    })
+    assert window_bucket_id(client) == "aw-watcher-window_other-host"
+
+
+def test_last_updated_still_accepts_an_offset(python310_isoformat):
+    # Normalizing the Z form must not disturb the form aw-server actually
+    # serves today.
+    assert query_module._last_updated(
+        {"last_updated": "2026-06-04T09:23:13+00:00"}) \
+        == datetime(2026, 6, 4, 9, 23, 13, tzinfo=timezone.utc)
+
+
+def test_last_updated_reads_a_naive_datetime_as_utc():
+    # An in-process datastore hands back a datetime rather than a string.
+    # Unpatched: the Py310Datetime stand-in is a subclass, so an isinstance
+    # check against it would reject a plain datetime for reasons of the test
+    # harness rather than of the code.
+    assert query_module._last_updated(
+        {"last_updated": datetime(2026, 6, 4, 9, 23, 13)}) \
+        == datetime(2026, 6, 4, 9, 23, 13, tzinfo=timezone.utc)
 
 
 def test_window_bucket_tolerates_missing_and_unparsable_last_updated():
