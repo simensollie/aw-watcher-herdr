@@ -7,6 +7,7 @@ own, hence the buffer.
 """
 from datetime import datetime, timedelta, timezone
 
+from aw_watcher_herdr import emit
 from aw_watcher_herdr.emit import AttentionWriter, FleetWriter
 from aw_watcher_herdr.state import Attention, CompletedRun, RunKey
 
@@ -118,6 +119,47 @@ def test_fleet_buffer_is_bounded_and_drops_oldest():
     assert [e.timestamp for e in events] == [
         T0 + timedelta(seconds=30), T0 + timedelta(seconds=40),
         T0 + timedelta(seconds=50)]
+
+
+def test_fleet_warns_once_after_repeated_flush_failures(monkeypatch):
+    # A permanent failure (HTTP 400 on a bad payload, 404 after the bucket was
+    # deleted in the UI) retries the same poisoned batch forever. Logged at
+    # debug only, the fleet bucket records nothing while the process looks
+    # healthy and nothing above debug ever says so.
+    warnings = []
+    monkeypatch.setattr(emit.logger, "warning",
+                        lambda msg, *a: warnings.append(msg % a if a else msg))
+    c = FakeClient(fail_inserts=True)
+    w = FleetWriter(c, "fleet")
+    for i in range(emit.WARN_AFTER_CONSECUTIVE_FAILURES - 1):
+        w.write([run(start=T0 + timedelta(seconds=i * 10), seconds=5)])
+    assert warnings == []
+    w.write([run(start=T0 + timedelta(seconds=999), seconds=5)])
+    assert len(warnings) == 1
+    assert "fleet" in warnings[0]
+    # And it does not repeat on every subsequent flush.
+    for i in range(5):
+        w.flush()
+    assert len(warnings) == 1
+
+
+def test_fleet_flush_warning_resets_after_a_success(monkeypatch):
+    warnings = []
+    monkeypatch.setattr(emit.logger, "warning",
+                        lambda msg, *a: warnings.append(msg % a if a else msg))
+    c = FakeClient(fail_inserts=True)
+    w = FleetWriter(c, "fleet", warn_after=2)
+    w.write([run(seconds=5)])
+    w.flush()
+    assert len(warnings) == 1
+    c.fail_inserts = False
+    w.flush()
+    assert w.pending_count == 0
+    # A later outage is a new incident and must be reported again.
+    c.fail_inserts = True
+    w.write([run(start=T0 + timedelta(seconds=60), seconds=5)])
+    w.flush()
+    assert len(warnings) == 2
 
 
 def test_fleet_flush_on_empty_buffer_is_a_noop():
