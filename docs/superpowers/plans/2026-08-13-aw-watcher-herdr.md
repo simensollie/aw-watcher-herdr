@@ -1628,7 +1628,7 @@ git commit -m "feat(state): agent run tracker with title-churn, rename, and cap 
   - `AttentionWriter(client, bucket_id: str, pulsetime: float, generic_terminal_label: str = "terminal")` with `write(attention: Attention, now: datetime) -> None`
   - `FleetWriter(client, bucket_id: str, max_pending: int = 10000)` with `write(runs: list[CompletedRun]) -> None`, `flush() -> None`, and property `pending_count -> int`
 
-- [ ] **Step 1: Write the failing writer tests**
+- [x] **Step 1: Write the failing writer tests**
 
 Create `tests/test_emit.py`:
 
@@ -1761,12 +1761,12 @@ def test_fleet_flush_on_empty_buffer_is_a_noop():
     assert c.inserted == []
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `.venv/bin/pytest tests/test_emit.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'aw_watcher_herdr.emit'`.
 
-- [ ] **Step 3: Write `emit.py`**
+- [x] **Step 3: Write `emit.py`**
 
 Create `aw_watcher_herdr/emit.py`:
 
@@ -1875,12 +1875,12 @@ class FleetWriter:
         self._pending = []
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `.venv/bin/pytest tests/test_emit.py -v`
 Expected: PASS (8 passed).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add aw_watcher_herdr/emit.py tests/test_emit.py
