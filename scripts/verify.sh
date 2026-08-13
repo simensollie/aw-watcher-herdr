@@ -10,7 +10,13 @@ PORT=5666
 HOST="$(hostname)"
 ATTENTION="aw-watcher-herdr_${HOST}-testing"
 FLEET="aw-watcher-herdr-agents_${HOST}-testing"
-DURATION="${DURATION:-8}"
+# aw-client pre-merges queued heartbeats in memory until their accumulated
+# duration reaches commit_interval, which is 5 s under the `client-testing`
+# config this script runs with. At --poll-interval 1 the first commit therefore
+# lands around the 7th tick, and only then does the dispatch thread POST it. The
+# old 8 s budget left a few hundred milliseconds of margin, so a slower machine
+# reported FAIL for a perfectly working watcher.
+DURATION="${DURATION:-15}"
 PY="${PY:-python3}"
 SOURCE="${SOURCE:-auto}"
 
