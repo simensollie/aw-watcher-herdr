@@ -178,8 +178,8 @@ categorization rule.
 ### 4.3 Transport seam
 
 `state.py` and `emit.py` consume plain dicts and are already platform-free. Every
-platform difference is therefore confined to `herdr.py`, which exposes one
-interface and two implementations:
+platform difference in the data path is therefore confined to `herdr.py`, which
+exposes one interface and two implementations:
 
 | Component | Role |
 |---|---|
@@ -217,6 +217,31 @@ development machine. Because `source` is an explicit config key, `--source cli`
 runs the identical code path on macOS, so the implementation is covered by real
 use rather than by fakes alone. Only the platform *selection* in `resolve_source`
 is tested with a patched `sys.platform`.
+
+**Where the operating system may be consulted (exhaustive).** Three code sites,
+and no others, are allowed to read `sys.platform` (or otherwise branch on the
+OS). Any new site is a design change, not an implementation detail:
+
+| Site | Why it must branch | Blast radius |
+|---|---|---|
+| `herdr.py` (`resolve_source`, `UnixSocketSource`) | herdr speaks a Unix socket on POSIX and a named pipe on Windows (this section) | The transport, behind `SnapshotSource` |
+| `lock.py` | the single-instance lock uses `fcntl.flock` on POSIX and is a no-op on Windows (§10.3) | Startup only |
+| `__main__.default_window_apps()` | §7.1: `aw-watcher-window` reports a different `app` string per platform, so the *default* for `window_app` is necessarily per-platform | One default config value, overridable by file or flag |
+
+Installer shell under `scripts/` is outside this rule: it selects a deployment
+route per OS by construction (§10).
+
+The third site is a deliberate carve-out rather than an oversight. It is a
+static value lookup, touches no platform-specific API (no `socket.AF_UNIX`, no
+`subprocess`, no OS-specific paths), and holds no resource, so it carries none
+of the portability risk the rule exists to contain. Moving it into `herdr.py`
+would put a windowing-query default inside the herdr transport abstraction,
+coupling two unrelated concerns to satisfy the letter of the rule.
+
+**Counterargument.** An enumerated exception is weaker than an absolute ban: a
+future contributor can cite it as precedent for a fourth site. The mitigation is
+that this list is exhaustive and normative, so adding to it requires editing the
+spec, which is visible in review.
 
 ## 5. Bucket 1 — attention
 
@@ -370,6 +395,9 @@ session". `window_app` is consequently a **list** (§8), defaulting to
 `["Ghostty"]` on macOS and to `[]` elsewhere, where an empty list means "not yet
 configured" and drops the filter from the rendered query rather than silently
 matching nothing.
+
+That default is computed by `__main__.default_window_apps()`, the third and last
+site permitted to read `sys.platform` (§4.3 lists all three).
 
 Two commands turn what were previously documentation-only config keys into
 working features:

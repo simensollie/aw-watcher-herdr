@@ -32,7 +32,7 @@ overlapping intervals.
 - **Language:** English throughout — code, comments, docs, commit messages.
 - **Timestamps:** all datetimes are timezone-aware UTC (`datetime.now(timezone.utc)`). Never use naive datetimes; aw-server rejects them.
 - **Platform rules** (spec §4.3):
-  - Nothing outside `herdr.py`, `lock.py` and `scripts/` may branch on the operating system.
+  - Nothing outside `herdr.py`, `lock.py`, `scripts/` and `__main__.default_window_apps()` may branch on the operating system. Those four sites are exhaustive and normative (spec §4.3 tabulates them); `default_window_apps()` is there because spec §7.1 defines a per-platform default for `window_app`, and it is a static value lookup that touches no platform-specific API. Adding a fifth site is a spec change, not an implementation detail.
   - `socket.AF_UNIX` must only ever be referenced *inside* a method body. It does not exist on Windows, so a module-level reference would break the import there.
   - macOS is the only platform verified end to end. Do not write docs or docstrings implying Linux or Windows have been tested.
 - **herdr protocol facts** (verified against herdr 0.8.0, protocol 19) — encode all five:
@@ -349,6 +349,12 @@ def default_window_apps() -> list[str]:
     Windows the executable name, neither of which is worth guessing when
     --detect-terminal can read the real value from the user's own data
     (spec §7.1). An empty list drops the filter rather than matching nothing.
+
+    This is one of the three code sites spec §4.3 permits to read
+    sys.platform (the others are herdr.py and lock.py). Spec §7.1 defines
+    the default itself as per-platform, and the lookup here is static: it
+    touches no platform-specific API and holds no resource, so it carries
+    none of the portability risk the rule exists to contain.
     """
     return ["Ghostty"] if sys.platform == "darwin" else []
 
@@ -728,8 +734,9 @@ and no macOS Accessibility permission are needed.
 Two transports exist because herdr uses a Unix domain socket on macOS and Linux
 but a named pipe on Windows, where CPython exposes no socket.AF_UNIX. The CLI
 wrapper is the route herdr's own documentation recommends for plugins there.
-This module is the ONLY place in the package that branches on the platform,
-apart from lock.py.
+This module is the only place in the package that branches on the platform for
+transport purposes. Spec §4.3 permits exactly two others: lock.py and
+__main__.default_window_apps().
 """
 
 from __future__ import annotations
@@ -1991,7 +1998,8 @@ would double every event in the fleet bucket. Because overlapping events are
 correct and expected there (spec §6), nothing downstream could detect the
 duplication — so it is prevented here instead.
 
-This module and herdr.py are the only two that branch on the platform.
+Together with herdr.py and __main__.default_window_apps(), this is one of the
+three code sites spec §4.3 permits to branch on the platform.
 """
 
 from __future__ import annotations

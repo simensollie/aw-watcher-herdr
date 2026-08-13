@@ -54,15 +54,11 @@ def default_window_apps() -> list[str]:
     --detect-terminal can read the real value from the user's own data
     (spec §7.1). An empty list drops the filter rather than matching nothing.
 
-    Documented exception to the package-wide platform rule (spec: only
-    herdr.py and lock.py may branch on `sys.platform`): this predates
-    herdr.py (Task 2) and is a one-line static lookup for a CLI default,
-    not OS-integration logic. It does not touch any platform-specific API
-    (no socket.AF_UNIX, no subprocess, no os-specific paths), so it carries
-    none of the portability risk the rule exists to contain. Kept here,
-    rather than moved into herdr.py, because it configures the CLI's
-    window-title-matching default (spec §7.1), not the herdr transport
-    herdr.py exists to abstract.
+    This is one of the three code sites spec §4.3 permits to read
+    sys.platform (the others are herdr.py and lock.py). Spec §7.1 defines
+    the default itself as per-platform, and the lookup here is static: it
+    touches no platform-specific API and holds no resource, so it carries
+    none of the portability risk the rule exists to contain.
     """
     return ["Ghostty"] if sys.platform == "darwin" else []
 
