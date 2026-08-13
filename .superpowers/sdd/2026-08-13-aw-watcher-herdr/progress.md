@@ -23,3 +23,5 @@ Task 2: minor (deferred): aw_watcher_herdr/herdr.py:9,130 Two em dashes appear i
 Task 2: minor (deferred): aw_watcher_herdr/herdr.py:36 `logger = logging.getLogger(__name__)` is declared at module level but never used anywhere in the file (no logger.debug/info/warning/error call exists). Dead code, present verbatim in the brief's code block, so it is plan-mandated rather than an implementer addition.
 Task 3: implemented (commits cecea6a..546f41a, 18/18 passing, full suite 47 passed)
 Task 3: complete (rounds: 0, spec PASS, quality APPROVED, suite 47 passed in 1.58s)
+Task 4: implemented (commits 042e757..c71b2d9, 17/17 passing, full suite 64 passed)
+Task 4: complete (rounds: 0, spec PASS, quality APPROVED, suite 64 passed in 1.68s)

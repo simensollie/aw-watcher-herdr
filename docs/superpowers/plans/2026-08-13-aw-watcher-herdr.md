@@ -1275,7 +1275,7 @@ git commit -m "feat(state): attention extraction with leading-glyph title cleani
   - frozen dataclass `CompletedRun(key: RunKey, title: str, start: datetime, end: datetime)` with property `duration_seconds -> float`
   - `FleetTracker(statuses=DEFAULT_FLEET_STATUSES, max_run_seconds=43200.0)` with `update(snapshot: dict, now: datetime) -> list[CompletedRun]`, `close_all(at: datetime) -> list[CompletedRun]`, and property `open_count -> int`.
 
-- [ ] **Step 1: Write the failing fleet tests**
+- [x] **Step 1: Write the failing fleet tests**
 
 Create `tests/test_state_fleet.py`:
 
@@ -1473,12 +1473,12 @@ def test_real_fixture_opens_only_the_working_agent():
     assert t.open_count == 1
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `.venv/bin/pytest tests/test_state_fleet.py -v`
 Expected: FAIL — `ImportError: cannot import name 'FleetTracker' from 'aw_watcher_herdr.state'`.
 
-- [ ] **Step 3: Append the fleet tracker to `state.py`**
+- [x] **Step 3: Append the fleet tracker to `state.py`**
 
 First add `datetime` to the import block at the top of `aw_watcher_herdr/state.py`, so it reads:
 
@@ -1597,17 +1597,17 @@ class FleetTracker:
         return closed
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `.venv/bin/pytest tests/test_state_fleet.py -v`
 Expected: PASS (17 passed).
 
-- [ ] **Step 5: Run the full suite**
+- [x] **Step 5: Run the full suite**
 
 Run: `.venv/bin/pytest -q`
 Expected: PASS (config + herdr + attention + fleet).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add aw_watcher_herdr/state.py tests/test_state_fleet.py
