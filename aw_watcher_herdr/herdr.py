@@ -104,7 +104,13 @@ class UnixSocketSource:
     """Connect-per-request client for the herdr API socket (macOS, Linux)."""
 
     def __init__(self, socket_path: str | None = None, timeout: float = 5.0):
-        self.socket_path = socket_path or default_socket_path()
+        # expanduser applies to a SUPPLIED path too, not just the default: the
+        # value documented in the example config and in DEFAULT_CONFIG is
+        # "~/.config/herdr/herdr.sock", and unexpanded it can never connect.
+        # The resulting FileNotFoundError becomes HerdrUnavailable, which the
+        # loop treats as "herdr is not running" and logs at debug only, so the
+        # watcher would record nothing forever while looking healthy.
+        self.socket_path = os.path.expanduser(socket_path or DEFAULT_SOCKET_PATH)
         self.timeout = timeout
         self._seq = 0
 

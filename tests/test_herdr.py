@@ -105,6 +105,29 @@ def test_socket_each_call_opens_a_fresh_connection():
     assert len(received) == 2
 
 
+def test_socket_path_from_config_is_tilde_expanded():
+    # The documented value in the example config and in DEFAULT_CONFIG is
+    # "~/.config/herdr/herdr.sock". Unexpanded it never connects, and the loop
+    # treats the resulting FileNotFoundError as "herdr is not running", so the
+    # watcher records nothing forever while looking perfectly healthy.
+    source = UnixSocketSource("~/.config/herdr/herdr.sock")
+    assert not source.socket_path.startswith("~")
+    assert source.socket_path == os.path.expanduser("~/.config/herdr/herdr.sock")
+
+
+def test_absolute_socket_path_is_left_alone(tmp_path):
+    path = str(tmp_path / "herdr.sock")
+    assert UnixSocketSource(path).socket_path == path
+
+
+def test_resolve_source_expands_the_configured_socket_path(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "darwin")
+    config = FakeConfig()
+    config.socket_path = "~/.config/herdr/herdr.sock"
+    source = resolve_source(config)
+    assert source.socket_path == os.path.expanduser("~/.config/herdr/herdr.sock")
+
+
 def test_socket_missing_path_raises_unavailable(tmp_path):
     source = UnixSocketSource(str(tmp_path / "nope.sock"))
     with pytest.raises(HerdrUnavailable):
