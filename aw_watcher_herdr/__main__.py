@@ -19,6 +19,7 @@ from aw_core.log import setup_logging
 
 from . import __version__
 from . import main as loop
+from . import query
 from .emit import AttentionWriter, FleetWriter
 from .herdr import DEFAULT_HERDR_BINARY, HerdrUnavailable, resolve_source
 from .lock import AlreadyRunning, single_instance
@@ -153,6 +154,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--no-fleet", dest="fleet_enabled",
                    action="store_const", const=False, default=None,
                    help="do not emit the agent-fleet bucket")
+    p.add_argument("--detect-terminal", dest="detect_terminal",
+                   action="store_true",
+                   help="list the apps your window watcher recorded, so you "
+                        "can set window_app correctly, and exit")
+    p.add_argument("--print-query", dest="print_query", action="store_true",
+                   help="print the ActivityWatch queries for your config "
+                        "and exit")
     p.add_argument("--snapshot", action="store_true",
                    help="print herdr's live session snapshot as JSON and exit "
                         "(for capturing test fixtures)")
@@ -187,14 +195,56 @@ def run_snapshot(config: Config) -> int:
     return 0
 
 
+def run_detect_terminal(config: Config, testing: bool) -> int:
+    """Print the apps the window watcher saw, so window_app can be set (§7.1)."""
+    client = ActivityWatchClient(CLIENT_NAME, testing=testing)
+    bucket_id = query.window_bucket_id(client)
+    if bucket_id is None:
+        print("No aw-watcher-window bucket found. Start ActivityWatch's window "
+              "watcher first.\nOn Linux/Wayland use aw-watcher-window-wayland "
+              "or awatcher; the stock watcher is X11 only.")
+        return 1
+
+    rows = query.top_window_apps(client, bucket_id, hours=24)
+    if not rows:
+        print(f"{bucket_id} has no events in the last 24 hours.")
+        return 1
+
+    print(f"Apps recorded in {bucket_id} over the last 24 hours:\n")
+    for app, seconds in rows:
+        print(f"  {seconds / 3600:6.2f} h  {app}")
+    print("\nPut the terminal you run herdr in into your config, for example:\n")
+    print(f'  window_app = {json.dumps([rows[0][0]])}')
+    print(f"\nCurrent setting: window_app = {json.dumps(config.window_app)}")
+    return 0
+
+
+def run_print_query(config: Config) -> int:
+    """Print pasteable ActivityWatch queries for the current config (§7)."""
+    print("# Attention: herdr time, gated on your terminal being frontmost")
+    print("# and you being present.")
+    if not config.window_app:
+        print("# window_app is unset, so the frontmost filter is omitted.")
+        print("# Run --detect-terminal to find the right value.")
+    print(query.render_attention_query(config.window_app, config.window_title))
+    print()
+    print("# Agent-hours per project. Never apply flood() to this bucket:")
+    print("# its events overlap by design.")
+    print(query.render_fleet_query())
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     config = load_config(args)
 
-    # One-shot diagnostic mode prints to stdout and exits; handle it before
-    # setup_logging so it doesn't spin up a rotating log file.
+    # One-shot diagnostic modes print to stdout and exit.
     if args.snapshot:
         return run_snapshot(config)
+    if args.detect_terminal:
+        return run_detect_terminal(config, args.testing)
+    if args.print_query:
+        return run_print_query(config)
 
     setup_logging(CLIENT_NAME, testing=args.testing, verbose=args.verbose,
                   log_stderr=True, log_file=True)
