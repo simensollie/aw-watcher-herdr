@@ -93,6 +93,22 @@ def _parse_envelope(raw, method: str) -> dict:
     return msg["result"]
 
 
+def _error_envelope(raw: str) -> dict | None:
+    """The parsed message if `raw` is a well-formed ERROR envelope, else None.
+
+    Only errors are recognised, never a result: a snapshot arriving on a stream
+    it has never been seen on means the CLI is behaving unexpectedly and must
+    not be silently accepted as data.
+    """
+    if not raw.startswith("{"):
+        return None
+    try:
+        msg = json.loads(raw)
+    except ValueError:
+        return None
+    return msg if isinstance(msg, dict) and "error" in msg else None
+
+
 def _snapshot_from_result(result: dict) -> dict:
     snap = result.get("snapshot") if isinstance(result, dict) else None
     if not isinstance(snap, dict):
@@ -187,8 +203,16 @@ class CliSource:
             ) from exc
 
         stdout = (proc.stdout or "").strip()
+        stderr = (proc.stderr or "").strip()
         if not stdout:
-            stderr = (proc.stderr or "").strip()
+            # Which stream carries the error envelope is not part of herdr's
+            # documented contract, and the taxonomy must not depend on it: a
+            # plain "herdr is not running" has to stay HerdrUnavailable (an
+            # honest gap) rather than becoming a HerdrError that escalates to a
+            # warning. _parse_envelope always raises for an error envelope, so
+            # control never falls through the next two lines.
+            if _error_envelope(stderr) is not None:
+                _parse_envelope(stderr, SNAPSHOT_METHOD)
             raise HerdrError(
                 f"{SNAPSHOT_METHOD}: {self.binary} exited {proc.returncode} "
                 f"with no output: {stderr}")

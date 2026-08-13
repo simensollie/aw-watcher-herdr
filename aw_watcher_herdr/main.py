@@ -74,6 +74,16 @@ def run(source, attention_writer, fleet_writer, tracker, config,
             if consecutive >= WARN_AFTER_CONSECUTIVE_ERRORS and not warned:
                 logger.warning(_HINT_HERDR_ERROR, consecutive, exc)
                 warned = True
+            # Open runs cannot be trusted once snapshots stop arriving: an
+            # agent that stops now looks like it never stopped, max_run_seconds
+            # is only enforced inside tracker.update() (never reached here),
+            # and close_all ignores the cap, so on shutdown hours later a
+            # multi-hour `working` event would be emitted for work that lasted
+            # a minute. Close at the last good poll, as the unavailable branch
+            # above does.
+            if tracker.open_count:
+                fleet_writer.write(tracker.close_all(last_poll or now))
+            last_poll = None
             continue
 
         consecutive = 0

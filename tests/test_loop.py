@@ -127,6 +127,23 @@ def test_herdr_unavailable_closes_runs_and_emits_nothing_new(monkeypatch):
     assert tracker.open_count == 0
 
 
+def test_herdr_error_closes_open_runs_at_the_last_good_poll(monkeypatch):
+    # max_run_seconds is only enforced inside FleetTracker.update(), which a
+    # failing snapshot never reaches, and close_all ignores the cap. Left open,
+    # a run that really stopped in minute one becomes one multi-hour `working`
+    # event the moment SIGTERM closes it at `now`.
+    # Two good polls (T0, T0+2), then snapshots start failing at T0+4.
+    script = [snap("working"), snap("working"), HerdrError("protocol boom"),
+              HerdrError("protocol boom")]
+    _, aw, fleet, tracker = drive(monkeypatch, script, ticks=4)
+    assert len(aw.writes) == 2          # only the two good ticks
+    assert len(fleet.runs) == 1
+    # Closed at the last good poll, not at the failing tick's `now` (T0+4).
+    assert fleet.runs[0].end == T0 + timedelta(seconds=2)
+    assert fleet.runs[0].duration_seconds == 2.0
+    assert tracker.open_count == 0
+
+
 def test_herdr_error_warns_once_after_the_threshold(monkeypatch):
     warnings = []
     monkeypatch.setattr(loop.logger, "warning",

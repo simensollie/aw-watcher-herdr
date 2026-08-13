@@ -56,13 +56,18 @@ def fake_herdr_socket(responses):
 
 
 @contextmanager
-def fake_herdr_cli(body, exit_code=0):
-    """Write an executable `herdr` shell script into a temp dir and return it."""
+def fake_herdr_cli(body, exit_code=0, stream="stdout"):
+    """Write an executable `herdr` shell script into a temp dir and return it.
+
+    `stream` chooses which stream the body goes to, because a CLI wrapper may
+    put its error envelope on stderr and the taxonomy must not depend on that.
+    """
     tmpdir = tempfile.mkdtemp()
     path = os.path.join(tmpdir, "herdr")
+    redirect = " >&2" if stream == "stderr" else ""
     with open(path, "w") as f:
         f.write("#!/bin/sh\n")
-        f.write(f"cat <<'EOF'\n{body}\nEOF\n")
+        f.write(f"cat{redirect} <<'EOF'\n{body}\nEOF\n")
         f.write(f"exit {exit_code}\n")
     os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC | stat.S_IXGRP
              | stat.S_IXOTH)
@@ -165,6 +170,37 @@ def test_cli_timeout_raises_unavailable():
             f.write("#!/bin/sh\nsleep 5\n")
         with pytest.raises(HerdrUnavailable):
             CliSource(binary, timeout=0.3).snapshot()
+
+
+def test_cli_server_not_running_on_stderr_also_raises_unavailable():
+    # Which stream a CLI wrapper uses for its error envelope is not part of
+    # herdr's documented contract. If it ever chose stderr, classifying the
+    # envelope by stream rather than by code would turn a plain "herdr is not
+    # running" into a HerdrError, and the loop would then escalate a normal
+    # state to a warning and (before this fix) leak open runs.
+    with fake_herdr_cli(json.dumps(NOT_RUNNING), exit_code=1,
+                        stream="stderr") as binary:
+        with pytest.raises(HerdrUnavailable):
+            CliSource(binary).snapshot()
+
+
+def test_cli_protocol_error_on_stderr_stays_a_herdr_error():
+    with fake_herdr_cli(json.dumps(OTHER_ERROR), exit_code=1,
+                        stream="stderr") as binary:
+        with pytest.raises(HerdrError) as exc:
+            CliSource(binary).snapshot()
+    assert not isinstance(exc.value, HerdrUnavailable)
+    assert "invalid_request" in str(exc.value)
+
+
+def test_cli_snapshot_on_stderr_is_not_treated_as_a_result():
+    # Only ERROR envelopes are read off stderr. A snapshot there would mean the
+    # CLI is behaving in a way this code has never seen, so it must not be
+    # silently accepted as data.
+    with fake_herdr_cli(json.dumps(GOOD), exit_code=1, stream="stderr") as binary:
+        with pytest.raises(HerdrError) as exc:
+            CliSource(binary).snapshot()
+    assert not isinstance(exc.value, HerdrUnavailable)
 
 
 def test_cli_non_json_stdout_raises_herdr_error():
