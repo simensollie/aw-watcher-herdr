@@ -247,7 +247,8 @@ make verify-cli   # the same, through the CLI source used on Windows
 |---|---|
 | Permanent gap in the timeline | herdr is not running. That is recorded as an honest gap, not an error. |
 | `another aw-watcher-herdr is already running` | Both launchd and aw-qt started it. Pick one route. |
-| No buckets created | aw-server is not reachable. Attention heartbeats are queued and flush on reconnect; fleet events are buffered in memory (up to 10 000) and retried. |
+| No buckets created | aw-server is not reachable. Attention heartbeats are queued and flush on reconnect; fleet events are buffered in memory (up to 10 000) and retried. Ten consecutive failed retries log a warning, so a permanent failure (a deleted bucket, a rejected payload) does not stay silent. |
+| `--detect-terminal` says it cannot read from ActivityWatch | aw-server is not running. Start ActivityWatch (or `aw-server --testing` for a `--testing` run). |
 | aw-qt tray does not list the watcher | On macOS this needs ActivityWatch 0.14.x; see the install section. |
 | Fleet totals exceed 24 h in a day | Expected. Agents run concurrently; see the known limitation above. |
 | Timeline splits after renaming a workspace | Expected. `app` is the workspace label; add a categorization rule to merge the two names. |
