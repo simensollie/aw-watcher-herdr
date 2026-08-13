@@ -12,11 +12,8 @@ three code sites spec §4.3 permits to branch on the platform.
 from __future__ import annotations
 
 import contextlib
-import logging
 import os
 import sys
-
-logger = logging.getLogger(__name__)
 
 
 class AlreadyRunning(RuntimeError):
