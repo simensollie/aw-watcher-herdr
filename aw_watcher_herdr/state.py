@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import unicodedata
 from dataclasses import dataclass
+from datetime import datetime
 
 
 @dataclass(frozen=True)
@@ -84,3 +85,109 @@ def extract_attention(snapshot: dict) -> Attention | None:
         agent=pane.get("agent"),
         agent_status=pane.get("agent_status"),
     )
+
+
+# --- fleet tracking ---------------------------------------------------------
+
+DEFAULT_FLEET_STATUSES = ("working", "blocked", "done")
+
+
+@dataclass(frozen=True)
+class RunKey:
+    """Identity of a run. A change to ANY field closes the run and opens a new
+    one. The title is deliberately absent: agents rewrite the terminal title as
+    they work, and segmenting on it would shred every run (spec §6.1)."""
+
+    pane_id: str
+    workspace_label: str
+    status: str
+    agent: str
+    cwd: str
+
+
+@dataclass(frozen=True)
+class CompletedRun:
+    """A closed interval, ready to become one ActivityWatch event."""
+
+    key: RunKey
+    title: str
+    start: datetime
+    end: datetime
+
+    @property
+    def duration_seconds(self) -> float:
+        return (self.end - self.start).total_seconds()
+
+
+class FleetTracker:
+    """Turns consecutive snapshots into opened/closed agent runs.
+
+    Holds no clock: callers pass `now`, which keeps sleep/suspend handling
+    (spec §6.3) in the loop where the real clock lives, and keeps this class
+    fully testable.
+    """
+
+    def __init__(self, statuses=DEFAULT_FLEET_STATUSES,
+                 max_run_seconds: float = 43200.0):
+        self._statuses = tuple(statuses)
+        self._max_run_seconds = float(max_run_seconds)
+        # pane_id -> (key, latest_title, started_at)
+        self._open: dict[str, tuple[RunKey, str, datetime]] = {}
+
+    @property
+    def open_count(self) -> int:
+        return len(self._open)
+
+    def _desired(self, snapshot: dict) -> dict[str, tuple[RunKey, str]]:
+        """pane_id -> (key, title) for every agent that should have an open run."""
+        labels = workspace_labels(snapshot)
+        desired: dict[str, tuple[RunKey, str]] = {}
+        for agent in (snapshot.get("agents") or []):
+            if not isinstance(agent, dict):
+                continue
+            pane_id = agent.get("pane_id")
+            status = agent.get("agent_status")
+            if not pane_id or status not in self._statuses:
+                continue
+            key = RunKey(
+                pane_id=pane_id,
+                workspace_label=labels.get(agent.get("workspace_id"), ""),
+                status=status,
+                agent=agent.get("agent") or "",
+                cwd=agent.get("cwd") or "",
+            )
+            # Same cleaning as the attention bucket (spec §5.1), so one task
+            # reads identically in both.
+            desired[pane_id] = (
+                key, clean_title(agent.get("terminal_title_stripped")) or "")
+        return desired
+
+    def update(self, snapshot: dict, now: datetime) -> list[CompletedRun]:
+        """Reconcile open runs against a snapshot; return the runs that closed."""
+        desired = self._desired(snapshot)
+        closed: list[CompletedRun] = []
+
+        for pane_id, (key, title, start) in list(self._open.items()):
+            incoming = desired.get(pane_id)
+            expired = (now - start).total_seconds() >= self._max_run_seconds
+            if incoming is None or incoming[0] != key or expired:
+                closed.append(CompletedRun(key, title, start, now))
+                del self._open[pane_id]
+            else:
+                # Same run continues; keep the most recent non-empty title.
+                self._open[pane_id] = (key, incoming[1] or title, start)
+
+        # Anything still desired but not open starts now. This also reopens the
+        # runs just closed by a key change or the cap, so tracking continues.
+        for pane_id, (key, title) in desired.items():
+            if pane_id not in self._open:
+                self._open[pane_id] = (key, title, now)
+
+        return closed
+
+    def close_all(self, at: datetime) -> list[CompletedRun]:
+        """Close every open run at `at`. Used on shutdown and on a sleep gap."""
+        closed = [CompletedRun(key, title, start, at)
+                  for (key, title, start) in self._open.values()]
+        self._open.clear()
+        return closed
