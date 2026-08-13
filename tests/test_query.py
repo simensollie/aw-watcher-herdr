@@ -6,6 +6,7 @@ of their own window bucket, the other renders a pasteable query from it.
 """
 from datetime import timedelta
 
+from aw_watcher_herdr import __main__ as cli
 from aw_watcher_herdr.query import (
     render_attention_query, render_fleet_query, top_window_apps,
     window_bucket_id,
@@ -114,3 +115,30 @@ def test_top_window_apps_requests_the_asked_for_window():
 
 def test_top_window_apps_on_an_empty_bucket_returns_empty():
     assert top_window_apps(FakeClient(events=[]), "bucket") == []
+
+
+# --- run_detect_terminal's client identity (fix round 1) -------------------
+
+def test_detect_terminal_uses_a_distinct_client_identity_from_the_daemon(
+        monkeypatch):
+    # ActivityWatchClient takes an OS-level single-instance file lock keyed by
+    # client name, independent of this package's own lock.py. The daemon
+    # holds that lock (under CLIENT_NAME) for its whole lifetime, so
+    # --detect-terminal must use a different name or a second process making
+    # the same call is killed by SystemExit(-1) before any HTTP request.
+    captured = {}
+
+    class FakeAWClient:
+        def __init__(self, client_name, testing=False):
+            captured["client_name"] = client_name
+            captured["testing"] = testing
+
+        def get_buckets(self):
+            return {}
+
+    monkeypatch.setattr(cli, "ActivityWatchClient", FakeAWClient)
+    cli.run_detect_terminal(cli.Config(), testing=True)
+
+    assert captured["client_name"] == f"{cli.CLIENT_NAME}-detect"
+    assert captured["client_name"] != cli.CLIENT_NAME
+    assert captured["testing"] is True

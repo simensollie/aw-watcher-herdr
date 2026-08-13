@@ -196,8 +196,21 @@ def run_snapshot(config: Config) -> int:
 
 
 def run_detect_terminal(config: Config, testing: bool) -> int:
-    """Print the apps the window watcher saw, so window_app can be set (§7.1)."""
-    client = ActivityWatchClient(CLIENT_NAME, testing=testing)
+    """Print the apps the window watcher saw, so window_app can be set (§7.1).
+
+    Uses a distinct client identity from the daemon's (f"{CLIENT_NAME}-detect",
+    per the brief) rather than the bare CLIENT_NAME. aw-client's
+    ActivityWatchClient.__init__ takes an OS-level advisory file lock keyed as
+    f"{client_name}-at-{host}-on-{port}" via its internal SingleInstance class,
+    independent of this package's own lock.py. The running daemon holds that
+    same-named lock for its whole lifetime, so a second process requesting the
+    same lock name is killed by sys.exit(-1) inside SingleInstance.__init__
+    before it can make any HTTP request. Controller ruling 11 (bucket-registry
+    identity) did not account for this separate single-instance file lock, so
+    it is overridden here; flagging back to the controller for that ruling to
+    be revisited.
+    """
+    client = ActivityWatchClient(f"{CLIENT_NAME}-detect", testing=testing)
     bucket_id = query.window_bucket_id(client)
     if bucket_id is None:
         print("No aw-watcher-window bucket found. Start ActivityWatch's window "
