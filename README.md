@@ -13,6 +13,13 @@ It records two things:
 It reads herdr's local socket API, so it needs **no macOS Accessibility
 permission** and works from a detached launchd agent.
 
+Built and verified on macOS. Nothing in the data path is macOS-specific or
+terminal-specific: herdr is a multiplexer, so any terminal works, and the one
+platform-bound piece (the transport) sits behind an interface with a
+`herdr api snapshot` implementation for Windows, where herdr uses a named pipe.
+Linux and Windows are installed through aw-qt's module discovery rather than
+launchd, and neither is end-to-end verified yet.
+
 > **Status: design complete, implementation not started.**
 > See [the design spec](docs/superpowers/specs/2026-08-12-herdr-activitywatch-watcher-design.md)
 > and [the implementation plan](docs/superpowers/plans/).
