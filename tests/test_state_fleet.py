@@ -109,6 +109,16 @@ def test_run_titles_are_glyph_stripped():
     assert closed[0].title == "Add retry logic"
 
 
+def test_run_titles_lose_a_multi_codepoint_glyph_whole():
+    # U+2733 plus VARIATION SELECTOR-16. The fleet path shares clean_title with
+    # the attention path, so a stray selector here would also mean two titles
+    # for one task in this bucket (spec §5.1).
+    t = FleetTracker()
+    t.update(snap(("w2:p1", "w2", "working", "✳️ Add retry logic")), T0)
+    closed = t.update(snap(), at(30))
+    assert closed[0].title == "Add retry logic"
+
+
 def test_workspace_rename_closes_and_reopens_the_run():
     # `app` is the workspace label and must not change mid-interval (spec §6.1).
     t = FleetTracker()

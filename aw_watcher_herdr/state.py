@@ -24,6 +24,17 @@ class Attention:
     agent_status: str | None
 
 
+# Unicode categories stripped from the START of a title:
+#   So  Symbol, other        the spinner glyphs and emoji themselves
+#   Mn  Mark, nonspacing     VARIATION SELECTOR-16, which follows an emoji glyph
+#   Me  Mark, enclosing      the enclosing half of a keycap-style sequence
+#   Cf  Format               ZERO WIDTH JOINER and friends inside emoji sequences
+# Marks and format characters matter because a glyph is often a SEQUENCE: stop
+# at the first of them and a stray zero-width character survives, which is a
+# second distinct title for one task.
+_GLYPH_CATEGORIES = frozenset({"So", "Mn", "Me", "Cf"})
+
+
 def clean_title(title: str | None) -> str | None:
     """Strip leading status glyphs from a terminal title (spec §5.1).
 
@@ -32,15 +43,18 @@ def clean_title(title: str | None) -> str | None:
     task yields two distinct titles either side of a working-to-idle
     transition and fragments the attention timeline.
 
-    Only Unicode category "So" (Symbol, other) is stripped, which covers the
-    spinner glyphs and emoji while leaving `~`, `[`, `(` and `/` intact (a
-    plain-shell title like `~/dev/alpha-service` must survive unharmed).
+    Only whitespace and the categories in _GLYPH_CATEGORIES are stripped, so
+    `~`, `[`, `(` and `/` survive: a plain-shell title like
+    `~/dev/alpha-service`, a `[dev] run the suite` prefix and a `(2) pending
+    review` counter must all come through unharmed, which is why the broader
+    reading of spec §5.1 ("a leading run of non-alphanumeric characters") is
+    deliberately not implemented as "strip every non-alphanumeric".
     """
     if not title:
         return None
     index = 0
     for char in title:
-        if char.isspace() or unicodedata.category(char) == "So":
+        if char.isspace() or unicodedata.category(char) in _GLYPH_CATEGORIES:
             index += 1
         else:
             break

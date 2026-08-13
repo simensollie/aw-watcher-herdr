@@ -25,6 +25,12 @@ def load(name):
     # herdr already stripped this one; cleaning must be idempotent.
     ("Rewrite the onboarding guide", "Rewrite the onboarding guide"),
     ("✳ Fetch the latest meetings", "Fetch the latest meetings"),
+    # The emoji-presentation form of the same glyph: U+2733 followed by
+    # VARIATION SELECTOR-16 (category Mn). Stopping at the selector leaves a
+    # stray glyph in the UI and, worse, a second distinct title for one task.
+    ("✳️ Fetch the latest meetings", "Fetch the latest meetings"),
+    # ZERO WIDTH JOINER (category Cf) between two glyphs, as in emoji sequences.
+    ("✳‍◐ Fetch the latest meetings", "Fetch the latest meetings"),
     ("⏺⏺  Multiple glyphs", "Multiple glyphs"),
     ("  leading whitespace only", "leading whitespace only"),
     # Not symbols: a path and a bracketed prefix must survive untouched.
@@ -39,6 +45,19 @@ def load(name):
 ])
 def test_clean_title(raw, expected):
     assert clean_title(raw) == expected
+
+
+def test_glyph_variants_of_one_task_collapse_to_one_title():
+    # The reason clean_title exists: herdr marks the same task with a different
+    # glyph per agent state, so any variant surviving the strip fragments the
+    # attention timeline across a working-to-idle transition.
+    variants = [
+        "◐ Fetch the latest meetings",     # working
+        "✳ Fetch the latest meetings",     # idle, text presentation
+        "✳️ Fetch the latest meetings",    # idle, emoji presentation (VS16)
+        "Fetch the latest meetings",       # already stripped by herdr
+    ]
+    assert len({clean_title(v) for v in variants}) == 1
 
 
 # --- attention extraction ---------------------------------------------------
