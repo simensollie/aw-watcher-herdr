@@ -2507,7 +2507,7 @@ git commit -m "feat: poll loop, single-instance lock, and entry-point wiring"
   - `query.window_bucket_id(client) -> str | None`
   - `__main__.run_detect_terminal(config, testing) -> int` and `__main__.run_print_query(config) -> int`
 
-- [ ] **Step 1: Write the failing query tests**
+- [x] **Step 1: Write the failing query tests**
 
 Create `tests/test_query.py`:
 
@@ -2632,12 +2632,12 @@ def test_top_window_apps_on_an_empty_bucket_returns_empty():
     assert top_window_apps(FakeClient(events=[]), "bucket") == []
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `.venv/bin/pytest tests/test_query.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'aw_watcher_herdr.query'`.
 
-- [ ] **Step 3: Write `query.py`**
+- [x] **Step 3: Write `query.py`**
 
 Create `aw_watcher_herdr/query.py`:
 
@@ -2728,12 +2728,12 @@ def render_fleet_query(status: str = "working") -> str:
     ])
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `.venv/bin/pytest tests/test_query.py -v`
 Expected: PASS (13 passed — 5 attention rendering, 2 fleet rendering, 6 detection).
 
-- [ ] **Step 5: Add the two flags to `parse_args` in `__main__.py`**
+- [x] **Step 5: Add the two flags to `parse_args` in `__main__.py`**
 
 Insert these two arguments immediately before the `--snapshot` argument:
 
@@ -2747,7 +2747,7 @@ Insert these two arguments immediately before the `--snapshot` argument:
                         "and exit")
 ```
 
-- [ ] **Step 6: Add the two command implementations to `__main__.py`**
+- [x] **Step 6: Add the two command implementations to `__main__.py`**
 
 Insert these two functions immediately after `run_snapshot`:
 
@@ -2793,7 +2793,7 @@ def run_print_query(config: Config) -> int:
 
 Add `from . import query` to the import block, next to `from . import main as loop`.
 
-- [ ] **Step 7: Dispatch the new flags in `main()`**
+- [x] **Step 7: Dispatch the new flags in `main()`**
 
 In `main()`, replace the `--snapshot` early-exit block with all three one-shot
 modes, keeping them ahead of `setup_logging` so none of them opens a log file:
@@ -2808,12 +2808,12 @@ modes, keeping them ahead of `setup_logging` so none of them opens a log file:
         return run_print_query(config)
 ```
 
-- [ ] **Step 8: Run the full suite**
+- [x] **Step 8: Run the full suite**
 
 Run: `.venv/bin/pytest -q`
 Expected: PASS.
 
-- [ ] **Step 9: Try both commands against real data**
+- [x] **Step 9: Try both commands against real data**
 
 ```bash
 .venv/bin/python -m aw_watcher_herdr --detect-terminal
@@ -2821,7 +2821,7 @@ Expected: PASS.
 ```
 Expected: the first lists apps with hour totals (`Ghostty` should be among them on this machine); the second prints two query blocks, the first containing `["Ghostty"]`.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add aw_watcher_herdr/query.py aw_watcher_herdr/__main__.py tests/test_query.py
