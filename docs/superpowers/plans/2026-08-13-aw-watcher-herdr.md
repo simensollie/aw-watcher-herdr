@@ -481,7 +481,7 @@ git commit -m "feat: package scaffolding, config loading, and CLI"
   - `CliSource(binary: str = "herdr", timeout: float = 10.0)` with `snapshot() -> dict`
   - `resolve_source(config) -> SnapshotSource`
 
-- [ ] **Step 1: Write the failing source tests**
+- [x] **Step 1: Write the failing source tests**
 
 Create `tests/test_herdr.py`:
 
@@ -704,12 +704,12 @@ def test_unknown_source_raises():
         resolve_source(FakeConfig("carrier-pigeon"))
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `.venv/bin/pytest tests/test_herdr.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'aw_watcher_herdr.herdr'`.
 
-- [ ] **Step 3: Write `herdr.py`**
+- [x] **Step 3: Write `herdr.py`**
 
 Create `aw_watcher_herdr/herdr.py`:
 
@@ -923,12 +923,12 @@ def resolve_source(config) -> SnapshotSource:
         f"unknown source {choice!r}; expected one of auto, socket, cli")
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `.venv/bin/pytest tests/test_herdr.py -v`
 Expected: PASS (20 passed — 5 socket, 6 CLI, 5 shared envelope, 4 resolution).
 
-- [ ] **Step 5: Smoke-test both sources against live herdr**
+- [x] **Step 5: Smoke-test both sources against live herdr**
 
 ```bash
 .venv/bin/python -c "
@@ -941,7 +941,7 @@ for src in (UnixSocketSource(), CliSource()):
 ```
 Expected: two lines, each printing a protocol number (19 on herdr 0.8.0) and the same workspace count. If herdr is not running both raise `HerdrUnavailable`, which is correct behaviour — start herdr and retry.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add aw_watcher_herdr/herdr.py tests/test_herdr.py
