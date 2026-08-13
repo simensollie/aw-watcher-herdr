@@ -91,7 +91,7 @@ its own file.
 - Consumes: nothing.
 - Produces: `Config` dataclass with fields `source: str`, `socket_path: str | None`, `herdr_binary: str`, `poll_interval: float`, `pulsetime: float`, `generic_terminal_label: str`, `fleet_enabled: bool`, `fleet_statuses: list[str]`, `max_run_seconds: float`, `gap_factor: float`, `window_app: list[str]`, `window_title: str | None`. Also `load_config(args) -> Config`, `parse_args(argv=None) -> argparse.Namespace`, `default_window_apps() -> list[str]`, and the module constant `CLIENT_NAME = "aw-watcher-herdr"`.
 
-- [ ] **Step 1: Create `pyproject.toml`**
+- [x] **Step 1: Create `pyproject.toml`**
 
 ```toml
 [build-system]
@@ -140,7 +140,7 @@ testpaths = ["tests"]
 The three OS classifiers reflect that the code supports all three (spec §4.3).
 Only macOS is verified; §11 of the spec says so and the README must too.
 
-- [ ] **Step 2: Create the package marker**
+- [x] **Step 2: Create the package marker**
 
 Create `aw_watcher_herdr/__init__.py`:
 
@@ -150,7 +150,7 @@ Create `aw_watcher_herdr/__init__.py`:
 __version__ = "0.1.0"
 ```
 
-- [ ] **Step 3: Create the dev venv and install**
+- [x] **Step 3: Create the dev venv and install**
 
 ```bash
 python3 -m venv .venv
@@ -159,7 +159,7 @@ python3 -m venv .venv
 ```
 Expected: completes without error. Verify with `.venv/bin/python -c "import aw_client, aw_core; print('ok')"` → prints `ok`.
 
-- [ ] **Step 4: Write the failing config tests**
+- [x] **Step 4: Write the failing config tests**
 
 Create `tests/test_config.py`:
 
@@ -284,12 +284,12 @@ def test_source_flag_rejects_unknown_values():
         cli.parse_args(["--source", "carrier-pigeon"])
 ```
 
-- [ ] **Step 5: Run the tests to verify they fail**
+- [x] **Step 5: Run the tests to verify they fail**
 
 Run: `.venv/bin/pytest tests/test_config.py -v`
 Expected: FAIL — `ModuleNotFoundError` / `ImportError` for `aw_watcher_herdr.__main__` (not written yet).
 
-- [ ] **Step 6: Write `__main__.py`**
+- [x] **Step 6: Write `__main__.py`**
 
 Create `aw_watcher_herdr/__main__.py`. (Tasks 6 and 7 extend `main()`; for now it only wires config.)
 
@@ -451,12 +451,12 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-- [ ] **Step 7: Run the tests to verify they pass**
+- [x] **Step 7: Run the tests to verify they pass**
 
 Run: `.venv/bin/pytest tests/test_config.py -v`
 Expected: PASS (9 passed).
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add pyproject.toml aw_watcher_herdr/__init__.py aw_watcher_herdr/__main__.py tests/test_config.py
