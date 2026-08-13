@@ -375,15 +375,24 @@ application is the terminal emulator, never herdr itself. Nothing in the data
 path is Ghostty-specific: the terminal name appears only in this query.
 
 ```python
-afk      = flood(query_bucket(find_bucket("aw-watcher-afk_")))
-window   = flood(query_bucket(find_bucket("aw-watcher-window_")))
-herdr    = flood(query_bucket(find_bucket("aw-watcher-herdr_")))
+afk      = flood(query_bucket(find_bucket("aw-watcher-afk_", "<host>")))
+window   = flood(query_bucket(find_bucket("aw-watcher-window_", "<host>")))
+herdr    = flood(query_bucket(find_bucket("aw-watcher-herdr_", "<host>")))
 not_afk  = filter_keyvals(afk, "status", ["not-afk"])
 in_herdr = filter_keyvals(window, "app", ["Ghostty"])   # from window_app
 events   = filter_period_intersect(herdr, in_herdr)
 events   = filter_period_intersect(events, not_afk)
 RETURN   = merge_events_by_keys(events, ["app", "title"])
 ```
+
+**The hostname argument is mandatory** (amended 2026-08-13 after end-to-end
+verification). `find_bucket` returns the first bucket whose id merely *contains*
+the filter string and ignores hostname unless one is passed. A machine that has
+been renamed keeps one bucket per hostname it has ever had, and only the current
+one still receives events, so the unqualified form resolves to a dead bucket:
+both gates then intersect against nothing and the query reports zero hours worked
+without raising. Qualified, a mismatch fails loudly instead. `--print-query`
+substitutes the local hostname the same way the watcher builds its own bucket id.
 
 ### 7.1 Terminal identity is not portable
 
@@ -404,7 +413,10 @@ working features:
 
 - `--detect-terminal` reads `aw-watcher-window_<host>` over the last 24 hours and
   prints the `app` values by total duration, so the correct value is read off the
-  user's own data rather than guessed.
+  user's own data rather than guessed. It picks the bucket whose recorded
+  hostname is this machine's (falling back to the most recently updated match),
+  never whichever the server happens to list first, for the same
+  renamed-machine reason as above.
 - `--print-query` renders the query above with the configured `window_app` list
   substituted, ready to paste. The `window_title` narrowing is emitted only when
   that key is set.
@@ -418,7 +430,7 @@ Fleet — deliberately **not** gated on AFK or frontmost. Agent work happening
 while the user is away is the point of this bucket.
 
 ```python
-agents = query_bucket(find_bucket("aw-watcher-herdr-agents_"))
+agents = query_bucket(find_bucket("aw-watcher-herdr-agents_", "<host>"))
 RETURN = merge_events_by_keys(filter_keyvals(agents, "status", ["working"]), ["app"])
 ```
 

@@ -10,17 +10,62 @@ bucket rather than guessed by this package.
 from __future__ import annotations
 
 import json
+import socket
 from datetime import datetime, timedelta, timezone
 
 WINDOW_BUCKET_PREFIX = "aw-watcher-window_"
 
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+def local_hostname(client=None) -> str:
+    """The hostname aw-server records in this machine's bucket ids.
+
+    Sourced the same way the watcher's own bucket id is built in __main__:
+    aw-client's client_hostname (itself socket.gethostname()), with a direct
+    fallback so the query renderers work without a connected client.
+    """
+    name = getattr(client, "client_hostname", None) if client is not None else None
+    return name or socket.gethostname()
+
+
+def _last_updated(metadata) -> datetime:
+    """Bucket last_updated as an aware datetime, or the epoch if unusable.
+
+    The REST API hands back an ISO string, an in-process datastore a datetime.
+    """
+    value = (metadata or {}).get("last_updated")
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value)
+        except ValueError:
+            return _EPOCH
+    if not isinstance(value, datetime):
+        return _EPOCH
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
 
 def window_bucket_id(client) -> str | None:
-    """The local window-watcher bucket, or None if that watcher never ran."""
-    for bucket_id in client.get_buckets():
-        if bucket_id.startswith(WINDOW_BUCKET_PREFIX):
-            return bucket_id
-    return None
+    """The local window-watcher bucket, or None if that watcher never ran.
+
+    A machine that has been renamed accumulates one aw-watcher-window_* bucket
+    per hostname it has ever had, and only the current one is still written to.
+    Returning whichever the server happens to list first therefore picks a dead
+    bucket at random, so prefer the one whose recorded hostname is this
+    machine's and fall back to the most recently updated match.
+    """
+    candidates = {
+        bucket_id: metadata or {}
+        for bucket_id, metadata in client.get_buckets().items()
+        if bucket_id.startswith(WINDOW_BUCKET_PREFIX)
+    }
+    if not candidates:
+        return None
+    hostname = local_hostname(client)
+    mine = {bucket_id: metadata for bucket_id, metadata in candidates.items()
+            if metadata.get("hostname") == hostname}
+    pool = mine or candidates
+    return max(pool, key=lambda bucket_id: _last_updated(pool[bucket_id]))
 
 
 def top_window_apps(client, bucket_id: str, hours: float = 24.0,
@@ -38,22 +83,41 @@ def top_window_apps(client, bucket_id: str, hours: float = 24.0,
     return ranked[:limit]
 
 
-def render_attention_query(window_apps, window_title: str | None = None) -> str:
+def _find_bucket(prefix: str, hostname: str) -> str:
+    """A hostname-qualified find_bucket call.
+
+    The hostname argument is not optional in practice. aw-server's find_bucket
+    returns the FIRST bucket whose id contains the filter and ignores hostname
+    unless one is passed, so on a machine that has been renamed the unqualified
+    form silently resolves to a stale bucket: every gate in the attention query
+    then intersects against nothing and the query reports zero hours worked with
+    no error at all. Qualified, a mismatch raises instead of lying.
+    """
+    return f'find_bucket({json.dumps(prefix)}, {json.dumps(hostname)})'
+
+
+def render_attention_query(window_apps, window_title: str | None = None,
+                           hostname: str | None = None) -> str:
     """Render the attention query with the configured terminal names in place.
 
     An empty `window_apps` drops the frontmost filter entirely rather than
     emitting a filter that matches nothing: the honest reading of "not
     configured" is "do not gate on the window", not "return nothing".
+
+    `hostname` defaults to this machine's, so no caller can accidentally render
+    an unqualified (and therefore silently wrong) find_bucket.
     """
+    host = hostname or local_hostname()
     apps = list(window_apps or [])
     lines = [
-        'afk      = flood(query_bucket(find_bucket("aw-watcher-afk_")));',
-        'herdr    = flood(query_bucket(find_bucket("aw-watcher-herdr_")));',
+        f'afk      = flood(query_bucket({_find_bucket("aw-watcher-afk_", host)}));',
+        f'herdr    = flood(query_bucket({_find_bucket("aw-watcher-herdr_", host)}));',
         'not_afk  = filter_keyvals(afk, "status", ["not-afk"]);',
     ]
     if apps:
         lines.append(
-            'window   = flood(query_bucket(find_bucket("aw-watcher-window_")));')
+            f'window   = flood(query_bucket('
+            f'{_find_bucket(WINDOW_BUCKET_PREFIX, host)}));')
         lines.append(f'in_term  = filter_keyvals(window, "app", {json.dumps(apps)});')
         if window_title:
             # Regex, not exact match: window titles carry document names and
@@ -69,7 +133,8 @@ def render_attention_query(window_apps, window_title: str | None = None) -> str:
     return "\n".join(lines)
 
 
-def render_fleet_query(status: str = "working") -> str:
+def render_fleet_query(status: str = "working",
+                       hostname: str | None = None) -> str:
     """Render the agent-hours query.
 
     Deliberately not gated on AFK or frontmost: agent work happening while the
@@ -77,8 +142,10 @@ def render_fleet_query(status: str = "working") -> str:
     it closes gaps by stretching events within one timeline, which corrupts
     deliberately overlapping ones (spec §7).
     """
+    host = hostname or local_hostname()
     return "\n".join([
-        'agents   = query_bucket(find_bucket("aw-watcher-herdr-agents_"));',
+        f'agents   = query_bucket('
+        f'{_find_bucket("aw-watcher-herdr-agents_", host)});',
         f'agents   = filter_keyvals(agents, "status", {json.dumps([status])});',
         'RETURN   = merge_events_by_keys(agents, ["app"]);',
     ])

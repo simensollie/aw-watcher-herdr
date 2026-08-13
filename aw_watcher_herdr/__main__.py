@@ -233,17 +233,28 @@ def run_detect_terminal(config: Config, testing: bool) -> int:
 
 
 def run_print_query(config: Config) -> int:
-    """Print pasteable ActivityWatch queries for the current config (§7)."""
+    """Print pasteable ActivityWatch queries for the current config (§7).
+
+    Every find_bucket is hostname-qualified. Unqualified, find_bucket returns
+    the first bucket whose id merely contains the filter, which on a renamed
+    machine is a stale bucket that makes the whole query report zero hours
+    without erroring.
+    """
+    hostname = query.local_hostname()
     print("# Attention: herdr time, gated on your terminal being frontmost")
     print("# and you being present.")
+    print(f"# Buckets are resolved for hostname {hostname!r}. If a query fails")
+    print("# with 'Unable to find bucket', your watchers recorded a different")
+    print("# hostname: check the bucket names in the ActivityWatch UI.")
     if not config.window_app:
         print("# window_app is unset, so the frontmost filter is omitted.")
         print("# Run --detect-terminal to find the right value.")
-    print(query.render_attention_query(config.window_app, config.window_title))
+    print(query.render_attention_query(config.window_app, config.window_title,
+                                       hostname=hostname))
     print()
     print("# Agent-hours per project. Never apply flood() to this bucket:")
     print("# its events overlap by design.")
-    print(query.render_fleet_query())
+    print(query.render_fleet_query(hostname=hostname))
     return 0
 
 

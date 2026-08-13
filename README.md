@@ -132,11 +132,21 @@ aw-watcher-herdr --snapshot | head -3
 
 ## Queries
 
-Print the queries for your own configuration:
+Print the queries for your own configuration, with your hostname already filled
+in:
 
 ```bash
 aw-watcher-herdr --print-query
 ```
+
+Every `find_bucket` below takes the hostname as its second argument, and that is
+not optional. Without it, `find_bucket` returns the first bucket whose id merely
+*contains* the filter. A machine that has been renamed keeps one bucket per old
+hostname, so the unqualified form resolves to a long-dead bucket and the query
+reports zero hours worked without raising a single error. Qualified, a
+mismatched hostname fails loudly with `Unable to find bucket` instead. Replace
+`YOUR-HOSTNAME` with the value `--print-query` shows (the hostname in your
+bucket names, visible in the ActivityWatch UI).
 
 ### Active herdr time
 
@@ -146,10 +156,10 @@ attention by intersecting with the window and AFK watchers, the same separation
 of concerns ActivityWatch already uses for AFK.
 
 ```python
-afk      = flood(query_bucket(find_bucket("aw-watcher-afk_")));
-herdr    = flood(query_bucket(find_bucket("aw-watcher-herdr_")));
+afk      = flood(query_bucket(find_bucket("aw-watcher-afk_", "YOUR-HOSTNAME")));
+herdr    = flood(query_bucket(find_bucket("aw-watcher-herdr_", "YOUR-HOSTNAME")));
 not_afk  = filter_keyvals(afk, "status", ["not-afk"]);
-window   = flood(query_bucket(find_bucket("aw-watcher-window_")));
+window   = flood(query_bucket(find_bucket("aw-watcher-window_", "YOUR-HOSTNAME")));
 in_term  = filter_keyvals(window, "app", ["Ghostty"]);
 events   = filter_period_intersect(herdr, in_term);
 events   = filter_period_intersect(events, not_afk);
@@ -163,6 +173,9 @@ executable name, so find yours with:
 aw-watcher-herdr --detect-terminal
 ```
 
+That reads the window bucket belonging to *this* machine's hostname, so the
+stale buckets left behind by earlier hostnames are ignored.
+
 On Linux/Wayland the stock `aw-watcher-window` records nothing (it is X11 only).
 The attention bucket still fills correctly, but you need
 `aw-watcher-window-wayland` or `awatcher` for the frontmost gating to work.
@@ -173,7 +186,7 @@ Deliberately **not** gated on AFK or frontmost: agent work happening while you
 are away is the whole point.
 
 ```python
-agents   = query_bucket(find_bucket("aw-watcher-herdr-agents_"));
+agents   = query_bucket(find_bucket("aw-watcher-herdr-agents_", "YOUR-HOSTNAME"));
 agents   = filter_keyvals(agents, "status", ["working"]);
 RETURN   = merge_events_by_keys(agents, ["app"]);
 ```
@@ -236,6 +249,8 @@ make verify-cli   # the same, through the CLI source used on Windows
 | Fleet totals exceed 24 h in a day | Expected. Agents run concurrently; see the known limitation above. |
 | Timeline splits after renaming a workspace | Expected. `app` is the workspace label; add a categorization rule to merge the two names. |
 | Query returns nothing on Linux/Wayland | The stock window watcher is X11 only. Use `aw-watcher-window-wayland` or drop the frontmost filter. |
+| Query returns zero hours, no error | A `find_bucket` without the hostname argument matched a stale bucket from an earlier hostname. Re-generate the query with `--print-query`. |
+| `Unable to find bucket matching ...` | The hostname in the query is not the one your watchers recorded. Take it from your bucket names in the ActivityWatch UI. |
 
 ## Status
 
