@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd service for aw-watcher-herdr (spec §10.2).
+
+  Reads herdr's local API, so it needs NO Accessibility permission (just the
+  user's own GUI login session). scripts/install.sh generates this file with
+  real paths filled in; this copy is the hand-editable template.
+
+  Install:
+    1. Replace CHANGE_ME below with your home directory.
+    2. cp this file to ~/Library/LaunchAgents/
+    3. launchctl bootstrap gui/$(id -u) \
+         ~/Library/LaunchAgents/com.activitywatch.aw-watcher-herdr.plist
+-->
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.activitywatch.aw-watcher-herdr</string>
+
+    <key>ProgramArguments</key>
+    <array>
+      <string>/Users/CHANGE_ME/.local/share/aw-watcher-herdr/venv/bin/aw-watcher-herdr</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!--
+      Restart only on a crash (non-zero exit), not on a clean exit. With a bare
+      <true/> a misconfigured path would respawn in a tight loop; ThrottleInterval
+      caps the respawn rate as a backstop.
+    -->
+    <key>KeepAlive</key>
+    <dict>
+      <key>SuccessfulExit</key>
+      <false/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/CHANGE_ME/Library/Logs/activitywatch/aw-watcher-herdr.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/CHANGE_ME/Library/Logs/activitywatch/aw-watcher-herdr.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+  </dict>
+</plist>

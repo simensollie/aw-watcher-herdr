@@ -1,0 +1,470 @@
+"""Entry point: parse args, load config, set up buckets, run the loop."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import os
+import signal
+import socket as socketlib
+import sys
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+
+from aw_client import ActivityWatchClient
+from aw_core.config import load_config_toml
+from aw_core.dirs import get_data_dir
+from aw_core.log import setup_logging
+# aw-client speaks HTTP through requests, so its transport errors surface here.
+from requests import RequestException
+
+from . import __version__
+from . import main as loop
+from . import query
+from .emit import AttentionWriter, FleetWriter
+from .herdr import (
+    DEFAULT_HERDR_BINARY, HerdrError, HerdrUnavailable, resolve_source,
+)
+from .lock import AlreadyRunning, single_instance
+from .state import DEFAULT_FLEET_STATUSES, FleetTracker
+
+logger = logging.getLogger(__name__)
+
+CLIENT_NAME = "aw-watcher-herdr"
+
+DEFAULT_GENERIC_LABEL = "terminal"
+
+# Default config rendered into the user's toml on first run (aw-core convention).
+# Every live key here is merged over the dataclass defaults by load_config_toml,
+# so a key whose default is platform-specific (window_app) must stay commented
+# out or it would force one platform's value onto all of them.
+DEFAULT_CONFIG = f"""
+[{CLIENT_NAME}]
+source = "auto"                # auto | socket | cli (nothing else)
+herdr_binary = "{DEFAULT_HERDR_BINARY}"
+poll_interval = 2.0            # seconds between snapshots, must be > 0
+pulsetime = 5.0                # heartbeat merge window, must be > 0
+generic_terminal_label = "{DEFAULT_GENERIC_LABEL}"
+fleet_enabled = true
+fleet_statuses = {json.dumps(list(DEFAULT_FLEET_STATUSES))}
+max_run_seconds = 43200.0      # hard cap on one run, must be > 0
+gap_factor = 3.0               # sleep gap = gap_factor x poll_interval, must be > 1
+# Terminal app names for the gating query. Run --detect-terminal to find yours.
+# window_app = ["Ghostty"]
+# window_title = "herdr"
+# socket_path = "~/.config/herdr/herdr.sock"   # defaults to that path
+""".strip()
+
+_FILE_KEYS = (
+    "source", "socket_path", "herdr_binary", "poll_interval", "pulsetime",
+    "generic_terminal_label", "fleet_enabled", "fleet_statuses",
+    "max_run_seconds", "gap_factor", "window_app", "window_title",
+)
+
+SOURCE_CHOICES = ("auto", "socket", "cli")
+
+
+class ConfigError(Exception):
+    """A config value is unusable, from the file or from a flag.
+
+    Raised rather than clamped: silently repairing a value the user wrote is
+    how a watcher ends up measuring something nobody asked for. main() prints
+    it and exits 2, the same status argparse uses for a bad flag.
+    """
+
+
+def default_window_apps() -> list[str]:
+    """Terminal app names aw-watcher-window is likely to report.
+
+    Only macOS gets a default. On Linux the value is the WM_CLASS and on
+    Windows the executable name, neither of which is worth guessing when
+    --detect-terminal can read the real value from the user's own data
+    (spec §7.1). An empty list drops the filter rather than matching nothing.
+
+    This is one of the three code sites spec §4.3 permits to read
+    sys.platform (the others are herdr.py and lock.py). Spec §7.1 defines
+    the default itself as per-platform, and the lookup here is static: it
+    touches no platform-specific API and holds no resource, so it carries
+    none of the portability risk the rule exists to contain.
+    """
+    return ["Ghostty"] if sys.platform == "darwin" else []
+
+
+@dataclass
+class Config:
+    source: str = "auto"
+    socket_path: str | None = None
+    herdr_binary: str = DEFAULT_HERDR_BINARY
+    poll_interval: float = 2.0
+    pulsetime: float = 5.0
+    generic_terminal_label: str = DEFAULT_GENERIC_LABEL
+    fleet_enabled: bool = True
+    fleet_statuses: list[str] = field(
+        default_factory=lambda: list(DEFAULT_FLEET_STATUSES))
+    max_run_seconds: float = 43200.0
+    gap_factor: float = 3.0
+    window_app: list[str] = field(default_factory=default_window_apps)
+    window_title: str | None = None
+
+
+def load_config(args: argparse.Namespace) -> Config:
+    """Load config from the aw-core toml, then apply CLI overrides (flags win)."""
+    cfg = Config()
+    try:
+        parsed = load_config_toml(CLIENT_NAME, DEFAULT_CONFIG)
+        section = parsed.get(CLIENT_NAME, parsed)
+        for key in _FILE_KEYS:
+            if key in section:
+                setattr(cfg, key, section[key])
+    except Exception as exc:  # noqa: BLE001 - config is best-effort, defaults are fine
+        logger.warning("could not load config file, using defaults: %s", exc)
+
+    # window_app was a single string before the 2026-08-13 amendment. Accept
+    # that shape so an old config file degrades gracefully instead of crashing.
+    if isinstance(cfg.window_app, str):
+        cfg.window_app = [cfg.window_app]
+
+    # Flags override the file. Use `is not None` so an explicit 0 is honored and
+    # not silently dropped by a truthiness check.
+    if args.source is not None:
+        cfg.source = args.source
+    if args.socket_path is not None:
+        cfg.socket_path = args.socket_path
+    if args.herdr_binary is not None:
+        cfg.herdr_binary = args.herdr_binary
+    if args.poll_interval is not None:
+        cfg.poll_interval = args.poll_interval
+    if args.pulsetime is not None:
+        cfg.pulsetime = args.pulsetime
+    if args.generic_terminal_label is not None:
+        cfg.generic_terminal_label = args.generic_terminal_label
+    if args.fleet_enabled is not None:
+        cfg.fleet_enabled = args.fleet_enabled
+
+    _validate(cfg)
+    return cfg
+
+
+def _positive_number(name: str, value, consequence: str) -> float:
+    """Value as a float, or a ConfigError naming the field and the consequence.
+
+    Every field validated through here shares one property: a non-positive or
+    non-numeric value makes the watcher record the wrong thing, or nothing, with
+    NOTHING in the running process complaining about it. That, not tidiness, is
+    the bar for validating a field at all (see _validate for the fields
+    deliberately left alone).
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ConfigError(f"{name}: {value!r} is not a number") from None
+    if number <= 0:
+        raise ConfigError(
+            f"{name} must be greater than 0 (got {value!r}); {consequence}")
+    return number
+
+
+def _validate(cfg: Config) -> None:
+    """Reject unusable values, wherever they came from.
+
+    The --source FLAG is guarded by argparse's choices, but the FILE value was
+    copied straight out of the toml, so a typo there crashed the daemon inside
+    resolve_source instead of reporting a config error.
+
+    Four numbers are validated because a non-positive value fails SILENTLY, each
+    in its own way (the consequence strings below spell them out). Deliberately
+    NOT validated, so the next reader does not have to re-derive it:
+
+      * `generic_terminal_label`: an empty label only makes titles blank. Wrong
+        looking, not wrong.
+      * `window_app`, `window_title`: read by --print-query only, never in the
+        data path, and empty already MEANS "do not gate on the window" (spec
+        §7.1).
+      * `socket_path`, `herdr_binary`: an empty string is falsy and both call
+        sites fall back to the documented default, so it cannot silently point
+        at nothing.
+      * `fleet_statuses`: an empty list is a plausible deliberate "track no
+        status", and rejecting an unrecognised status would break the day herdr
+        adds one. A bare string IS normalized (below), because tuple("done")
+        iterates the characters and matches nothing.
+      * `fleet_enabled`: any truthy or falsy value reads correctly as a bool.
+    """
+    if cfg.source not in SOURCE_CHOICES:
+        raise ConfigError(
+            f"source: {cfg.source!r} is not a valid source; expected one of "
+            f"{', '.join(SOURCE_CHOICES)}")
+
+    cfg.poll_interval = _positive_number(
+        "poll_interval", cfg.poll_interval,
+        "0 would spin the poll loop, pinning a core and hammering herdr's API, "
+        "and would disable sleep/suspend detection")
+    cfg.pulsetime = _positive_number(
+        "pulsetime", cfg.pulsetime,
+        "aw-server merges a heartbeat into the previous event only within "
+        "pulsetime, so 0 leaves every attention event at zero duration and the "
+        "timeline reports no time at all")
+    cfg.max_run_seconds = _positive_number(
+        "max_run_seconds", cfg.max_run_seconds,
+        "the cap is checked as elapsed >= max_run_seconds, so 0 expires every "
+        "agent run on the very next poll and no run is ever recorded whole")
+    cfg.gap_factor = _positive_number(
+        "gap_factor", cfg.gap_factor,
+        "the sleep threshold is gap_factor x poll_interval, so 0 disables "
+        "sleep/suspend detection (the loop guards it with gap_threshold > 0)")
+    if cfg.gap_factor <= 1:
+        # Measured: at or below 1 the threshold is at or below one poll
+        # interval, so every normal tick looks like a sleep gap, every open run
+        # is closed at the last good poll with a zero duration, and FleetWriter
+        # drops all of them. The fleet bucket then records nothing whatsoever.
+        raise ConfigError(
+            f"gap_factor must be greater than 1 (got {cfg.gap_factor!r}); at or "
+            f"below 1 every normal poll counts as a sleep gap, which closes "
+            f"every agent run instantly and leaves the fleet bucket empty")
+
+    # Same tolerance as window_app, for the same reason: a bare string would be
+    # iterated character by character, matching no status at all.
+    if isinstance(cfg.fleet_statuses, str):
+        cfg.fleet_statuses = [cfg.fleet_statuses]
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(prog=CLIENT_NAME, description=__doc__)
+    p.add_argument("--testing", action="store_true",
+                   help="use the aw test server (port 5666) and -testing buckets")
+    p.add_argument("--verbose", action="store_true", help="debug logging")
+    p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    p.add_argument("--source", choices=SOURCE_CHOICES,
+                   help="how to reach herdr (default auto: socket on POSIX, "
+                        "cli on Windows)")
+    p.add_argument("--socket-path", dest="socket_path",
+                   help="override the herdr socket path (socket source)")
+    p.add_argument("--herdr-binary", dest="herdr_binary",
+                   help="herdr executable to invoke (cli source)")
+    p.add_argument("--poll-interval", dest="poll_interval", type=float,
+                   help="seconds between snapshots")
+    p.add_argument("--pulsetime", dest="pulsetime", type=float,
+                   help="heartbeat merge window in seconds (attention bucket)")
+    p.add_argument("--generic-terminal-label", dest="generic_terminal_label",
+                   help="title stored for panes with no agent")
+    # store_const keeps the unset default at None so it doesn't override the file.
+    p.add_argument("--no-fleet", dest="fleet_enabled",
+                   action="store_const", const=False, default=None,
+                   help="do not emit the agent-fleet bucket")
+    p.add_argument("--detect-terminal", dest="detect_terminal",
+                   action="store_true",
+                   help="list the apps your window watcher recorded, so you "
+                        "can set window_app correctly, and exit")
+    p.add_argument("--print-query", dest="print_query", action="store_true",
+                   help="print the ActivityWatch queries for your config "
+                        "and exit")
+    p.add_argument("--snapshot", action="store_true",
+                   help="print herdr's live session snapshot as JSON and exit "
+                        "(for capturing test fixtures)")
+    return p.parse_args(argv)
+
+
+def lock_path(testing: bool = False) -> str:
+    """Where the single-instance lock lives (spec §10.3).
+
+    A --testing run uses a distinct file so it never contends with an
+    installed production watcher: without this, `--testing` would fail with
+    AlreadyRunning the moment the real LaunchAgent is installed. The two
+    instances also target different aw-server ports (5666 vs the default),
+    so they cannot double-count even while both hold their own lock.
+    """
+    name = "watcher-testing.lock" if testing else "watcher.lock"
+    return os.path.join(get_data_dir(CLIENT_NAME), name)
+
+
+def run_snapshot(config: Config) -> int:
+    """Print herdr's live snapshot as JSON (for capturing test fixtures).
+
+    Remember to replace real workspace names with synthetic ones before
+    committing anything derived from this.
+    """
+    try:
+        snap = resolve_source(config).snapshot()
+    except HerdrUnavailable as exc:
+        print(f"herdr is not running: {exc}")
+        return 1
+    except HerdrError as exc:
+        # A protocol-level failure is a diagnostic result, not a crash: this
+        # command is what a user runs to find out what is wrong.
+        print(f"{CLIENT_NAME}: herdr returned no usable snapshot: {exc}",
+              file=sys.stderr)
+        return 1
+    print(json.dumps(snap, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _unreachable_server_message(client, testing: bool, exc: Exception) -> str:
+    """One actionable line for "aw-server is not running", the first-run state.
+
+    `client` may be None: ActivityWatchClient's constructor can itself fail, and
+    only it knows the configured address, hence the default-port fallback.
+    """
+    address = getattr(client, "server_address", None) or (
+        "http://localhost:5666" if testing else "http://localhost:5600")
+    server = "aw-server --testing" if testing else "aw-server"
+    return (f"{CLIENT_NAME}: cannot read from ActivityWatch at {address} "
+            f"({exc.__class__.__name__}: {exc}).\n"
+            f"Start ActivityWatch (or `{server}`) and try again.")
+
+
+def run_detect_terminal(config: Config, testing: bool) -> int:
+    """Print the apps the window watcher saw, so window_app can be set (§7.1).
+
+    Uses a distinct client identity from the daemon's (f"{CLIENT_NAME}-detect",
+    per the brief) rather than the bare CLIENT_NAME. aw-client's
+    ActivityWatchClient.__init__ takes an OS-level advisory file lock keyed as
+    f"{client_name}-at-{host}-on-{port}" via its internal SingleInstance class,
+    independent of this package's own lock.py. The running daemon holds that
+    same-named lock for its whole lifetime, so a second process requesting the
+    same lock name is killed by sys.exit(-1) inside SingleInstance.__init__
+    before it can make any HTTP request. Controller ruling 11 (bucket-registry
+    identity) did not account for this separate single-instance file lock, so
+    it is overridden here; flagging back to the controller for that ruling to
+    be revisited.
+
+    Every HTTP call here can fail with aw-server simply not running, which is
+    the common first-run state, so RequestException is reported as one
+    actionable line instead of a traceback. --print-query needs no client at
+    all, so it cannot share the hazard.
+    """
+    client = None
+    try:
+        client = ActivityWatchClient(f"{CLIENT_NAME}-detect", testing=testing)
+        bucket_id = query.window_bucket_id(client)
+        rows = query.top_window_apps(client, bucket_id, hours=24) \
+            if bucket_id is not None else []
+    except RequestException as exc:
+        print(_unreachable_server_message(client, testing, exc), file=sys.stderr)
+        return 1
+
+    if bucket_id is None:
+        print("No aw-watcher-window bucket found. Start ActivityWatch's window "
+              "watcher first.\nOn Linux/Wayland use aw-watcher-window-wayland "
+              "or awatcher; the stock watcher is X11 only.")
+        return 1
+
+    if not rows:
+        print(f"{bucket_id} has no events in the last 24 hours.")
+        return 1
+
+    print(f"Apps recorded in {bucket_id} over the last 24 hours:\n")
+    for app, seconds in rows:
+        print(f"  {seconds / 3600:6.2f} h  {app}")
+    print("\nPut the terminal you run herdr in into your config, for example:\n")
+    print(f'  window_app = {json.dumps([rows[0][0]])}')
+    print(f"\nCurrent setting: window_app = {json.dumps(config.window_app)}")
+    return 0
+
+
+def run_print_query(config: Config) -> int:
+    """Print pasteable ActivityWatch queries for the current config (§7).
+
+    Every find_bucket is hostname-qualified. Unqualified, find_bucket returns
+    the first bucket whose id merely contains the filter, which on a renamed
+    machine is a stale bucket that makes the whole query report zero hours
+    without erroring.
+    """
+    hostname = query.local_hostname()
+    print("# Attention: herdr time, gated on your terminal being frontmost")
+    print("# and you being present.")
+    print(f"# Buckets are resolved for hostname {hostname!r}. If a query fails")
+    print("# with 'Unable to find bucket', your watchers recorded a different")
+    print("# hostname: check the bucket names in the ActivityWatch UI.")
+    if not config.window_app:
+        print("# window_app is unset, so the frontmost filter is omitted.")
+        print("# Run --detect-terminal to find the right value.")
+    print(query.render_attention_query(config.window_app, config.window_title,
+                                       hostname=hostname))
+    print()
+    print("# Agent-hours per project. Never apply flood() to this bucket:")
+    print("# its events overlap by design.")
+    print(query.render_fleet_query(hostname=hostname))
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    try:
+        config = load_config(args)
+    except ConfigError as exc:
+        # Exit 2, matching argparse's status for a bad flag: an unusable config
+        # file is the same class of mistake, just written down somewhere else.
+        print(f"{CLIENT_NAME}: {exc}", file=sys.stderr)
+        return 2
+
+    # One-shot diagnostic modes print to stdout and exit.
+    if args.snapshot:
+        return run_snapshot(config)
+    if args.detect_terminal:
+        return run_detect_terminal(config, args.testing)
+    if args.print_query:
+        return run_print_query(config)
+
+    setup_logging(CLIENT_NAME, testing=args.testing, verbose=args.verbose,
+                  log_stderr=True, log_file=True)
+
+    try:
+        lock = single_instance(lock_path(args.testing))
+        lock.__enter__()
+    except AlreadyRunning as exc:
+        # Both launchd and aw-qt can start this watcher; two copies would
+        # silently double the fleet bucket (spec §10.3).
+        logger.error("%s", exc)
+        print(f"aw-watcher-herdr: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        client = ActivityWatchClient(CLIENT_NAME, testing=args.testing)
+        hostname = client.client_hostname or socketlib.gethostname()
+        suffix = "-testing" if args.testing else ""
+        attention_bucket = f"{CLIENT_NAME}_{hostname}{suffix}"
+        fleet_bucket = f"{CLIENT_NAME}-agents_{hostname}{suffix}"
+
+        # currentwindow reuses aw's window-activity views and categorization (§5).
+        client.create_bucket(attention_bucket, event_type="currentwindow",
+                             queued=True)
+        if config.fleet_enabled:
+            client.create_bucket(fleet_bucket, event_type="app.agent.activity",
+                                 queued=True)
+
+        source = resolve_source(config)
+        logger.info("reading herdr via %s", type(source).__name__)
+        tracker = FleetTracker(statuses=config.fleet_statuses,
+                               max_run_seconds=config.max_run_seconds)
+        attention_writer = AttentionWriter(client, attention_bucket,
+                                           config.pulsetime,
+                                           config.generic_terminal_label)
+        fleet_writer = FleetWriter(client, fleet_bucket)
+
+        # SIGTERM (launchd or aw-qt stop) must close open runs, or their
+        # intervals are lost.
+        stopping = {"flag": False}
+
+        def _stop(_signum, _frame):
+            stopping["flag"] = True
+
+        signal.signal(signal.SIGTERM, _stop)
+
+        with client:
+            try:
+                loop.run(source, attention_writer, fleet_writer, tracker,
+                         config, stop=lambda: stopping["flag"])
+            except KeyboardInterrupt:
+                logger.info("interrupted; shutting down")
+            finally:
+                if config.fleet_enabled:
+                    fleet_writer.write(
+                        tracker.close_all(datetime.now(timezone.utc)))
+                    fleet_writer.flush()
+    finally:
+        lock.__exit__(None, None, None)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aw-watcher-herdr"
+version = "0.1.0"
+description = "ActivityWatch watcher recording herdr workspace attention and concurrent agent activity"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MPL-2.0" }
+authors = [{ name = "Simen Sollie", email = "simen@sollie.io" }]
+keywords = ["activitywatch", "herdr", "time-tracking", "watcher", "ai-agents"]
+classifiers = [
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)",
+]
+dependencies = [
+    # >=0.5.13 for client_hostname and queued heartbeat/create_bucket support.
+    # Brings aw-core (Event, load_config_toml, setup_logging) with it.
+    "aw-client>=0.5.13",
+    # aw-client's own HTTP transport. Declared because __main__ imports
+    # RequestException directly to report "aw-server is not running".
+    "requests",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.urls]
+Homepage = "https://github.com/simensollie/aw-watcher-herdr"
+Issues = "https://github.com/simensollie/aw-watcher-herdr/issues"
+
+[project.scripts]
+aw-watcher-herdr = "aw_watcher_herdr.__main__:main"
+
+[tool.setuptools]
+packages = ["aw_watcher_herdr"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

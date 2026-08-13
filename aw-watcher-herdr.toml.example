@@ -1,0 +1,37 @@
+# Copy to your ActivityWatch config directory, which on macOS is:
+#   ~/Library/Application Support/activitywatch/aw-watcher-herdr/aw-watcher-herdr.toml
+# CLI flags override these values.
+
+[aw-watcher-herdr]
+# How to reach herdr: "auto" uses the Unix socket on macOS/Linux and the
+# `herdr api snapshot` CLI on Windows, where herdr uses a named pipe.
+source = "auto"                # nothing but auto, socket or cli is accepted
+
+# Socket source only. Defaults to ~/.config/herdr/herdr.sock, and a leading
+# ~ is expanded here too.
+# socket_path = "~/.config/herdr/herdr.sock"
+
+# CLI source only: the herdr executable to invoke.
+herdr_binary = "herdr"
+
+poll_interval = 2.0            # seconds between snapshots, must be > 0
+pulsetime = 5.0                # heartbeat merge window (attention bucket), must be > 0
+generic_terminal_label = "terminal"   # title for panes with no agent
+
+# --- agent fleet bucket ---
+fleet_enabled = true
+# Which herdr agent states become intervals. `idle` is the resting state and
+# would dwarf everything else; `unknown` does not prove completion.
+fleet_statuses = ["working", "blocked", "done"]
+max_run_seconds = 43200.0      # hard cap on one run (12h), guards a wedged watcher, must be > 0
+gap_factor = 3.0               # gap > gap_factor x poll_interval => machine slept.
+                               # Must be > 1: at or below 1 every normal poll counts
+                               # as a gap and the fleet bucket stays empty.
+
+# --- used by --print-query ---
+# The terminal you run herdr in, as your window watcher names it. That differs
+# per platform, so run `aw-watcher-herdr --detect-terminal` to find yours.
+# A list, because you may use more than one terminal.
+window_app = ["Ghostty"]
+# Optional regex narrowing on the window title.
+# window_title = "herdr"
