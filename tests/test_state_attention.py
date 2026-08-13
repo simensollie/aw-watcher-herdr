@@ -112,9 +112,36 @@ def test_missing_focused_pane_still_yields_the_workspace():
     assert a.title is None
 
 
-def test_empty_label_is_treated_as_missing():
+def _blank_the_label(snap, ws_id="w3"):
+    for w in snap["workspaces"]:
+        if w["workspace_id"] == ws_id:
+            w["label"] = ""
+    return snap
+
+
+def test_empty_label_still_yields_attention():
+    # "The focused workspace has no label" is NOT "nothing is focused". Treating
+    # them alike stopped all attention recording, silently and at no log level,
+    # for as long as that workspace stayed focused, while the fleet path went on
+    # recording the very same workspace with app "". The two paths now agree,
+    # and the loop is what makes the situation visible.
+    a = extract_attention(_blank_the_label(load("snapshot_basic.json")))
+    assert a is not None
+    assert a.workspace_label == ""
+    assert a.workspace_id == "w3"
+    assert a.title == "Rewrite the onboarding guide"
+
+
+def test_missing_label_key_is_the_same_as_an_empty_one():
     snap = load("snapshot_basic.json")
     for w in snap["workspaces"]:
         if w["workspace_id"] == "w3":
-            w["label"] = ""
-    assert extract_attention(snap) is None
+            del w["label"]
+    assert extract_attention(snap).workspace_label == ""
+
+
+def test_an_unfocused_snapshot_is_still_distinguishable_from_an_unlabeled_one():
+    # The distinction the old None-for-empty-label behaviour destroyed.
+    assert extract_attention(load("snapshot_no_focus.json")) is None
+    assert extract_attention(
+        _blank_the_label(load("snapshot_basic.json"))) is not None

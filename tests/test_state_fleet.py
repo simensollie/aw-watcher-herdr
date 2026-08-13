@@ -176,6 +176,16 @@ def test_run_longer_than_the_cap_is_closed_and_reopened():
     assert t.open_count == 1  # reopened, so tracking continues
 
 
+def test_an_unlabeled_workspace_still_opens_a_run_with_an_empty_app():
+    # The counterpart of test_empty_label_still_yields_attention: both paths
+    # record an unlabeled workspace rather than one path going silent.
+    t = FleetTracker()
+    t.update(snap(("w2:p1", "w2", "working", "task"), workspaces={"w2": ""}), T0)
+    closed = t.update(snap(), at(30))
+    assert len(closed) == 1
+    assert closed[0].key.workspace_label == ""
+
+
 def test_custom_status_set_is_respected():
     t = FleetTracker(statuses=("blocked",))
     t.update(snap(("w2:p1", "w2", "working", "x"),

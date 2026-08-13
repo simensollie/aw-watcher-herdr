@@ -251,6 +251,7 @@ make verify-cli   # the same, through the CLI source used on Windows
 | aw-qt tray does not list the watcher | On macOS this needs ActivityWatch 0.14.x; see the install section. |
 | Fleet totals exceed 24 h in a day | Expected. Agents run concurrently; see the known limitation above. |
 | Timeline splits after renaming a workspace | Expected. `app` is the workspace label; add a categorization rule to merge the two names. |
+| Attention events with an empty `app` | The focused herdr workspace has no label. Time is still recorded (the fleet bucket does the same) and the watcher logs a warning once; label the workspace in herdr to make it attributable. |
 | Query returns nothing on Linux/Wayland | The stock window watcher is X11 only. Use `aw-watcher-window-wayland` or drop the frontmost filter. |
 | Query returns zero hours, no error | A `find_bucket` without the hostname argument matched a stale bucket from an earlier hostname. Re-generate the query with `--print-query`. |
 | `Unable to find bucket matching ...` | The hostname in the query is not the one your watchers recorded. Take it from your bucket names in the ActivityWatch UI. |

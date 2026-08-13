@@ -25,6 +25,12 @@ _HINT_HERDR_ERROR = (
     "and file an issue. (consecutive failures: %s; last error: %s)"
 )
 
+_HINT_UNLABELED_WORKSPACE = (
+    "the focused herdr workspace (%s) has no label, so attention events are "
+    "recorded with an empty app field. Give the workspace a label in herdr to "
+    "make them attributable. (reported once per run of unlabeled polls)"
+)
+
 
 def _now() -> datetime:
     """Indirected so tests can drive a deterministic clock."""
@@ -39,6 +45,7 @@ def run(source, attention_writer, fleet_writer, tracker, config,
     last_poll: datetime | None = None
     consecutive = 0
     warned = False
+    warned_unlabeled = False
 
     logger.info("aw-watcher-herdr started (poll=%ss, pulsetime=%ss, fleet=%s)",
                 config.poll_interval, config.pulsetime, config.fleet_enabled)
@@ -91,6 +98,17 @@ def run(source, attention_writer, fleet_writer, tracker, config,
 
         attention = state.extract_attention(snapshot)
         if attention is not None:
+            # An unlabeled workspace is recorded, not skipped (state.py agrees
+            # with the fleet path there), but it is not silent either: once per
+            # run of unlabeled polls, so a permanent condition is visible in the
+            # log without one line per tick.
+            if not attention.workspace_label:
+                if not warned_unlabeled:
+                    logger.warning(_HINT_UNLABELED_WORKSPACE,
+                                   attention.workspace_id)
+                    warned_unlabeled = True
+            else:
+                warned_unlabeled = False
             attention_writer.write(attention, now)
 
         if config.fleet_enabled:

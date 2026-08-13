@@ -162,6 +162,38 @@ def test_herdr_unavailable_does_not_warn(monkeypatch):
     assert warnings == []
 
 
+def test_unlabeled_focused_workspace_is_recorded_and_warned_about_once(monkeypatch):
+    # state.py is pure and holds no logger by design, so the visibility for an
+    # unlabeled workspace belongs here in the caller. Attention must still be
+    # recorded (the fleet path records the same workspace with app ""), and the
+    # warning must not repeat on every tick.
+    warnings = []
+    monkeypatch.setattr(loop.logger, "warning",
+                        lambda msg, *a: warnings.append(msg % a if a else msg))
+    _, aw, _, _ = drive(monkeypatch, [snap(ws_label="")], ticks=4)
+    assert len(aw.writes) == 4
+    assert all(w[0].workspace_label == "" for w in aw.writes)
+    assert len(warnings) == 1
+    assert "w2" in warnings[0]
+
+
+def test_the_unlabeled_warning_is_repeated_after_a_labeled_workspace(monkeypatch):
+    warnings = []
+    monkeypatch.setattr(loop.logger, "warning",
+                        lambda msg, *a: warnings.append(msg % a if a else msg))
+    script = [snap(ws_label=""), snap(ws_label="beta app"), snap(ws_label="")]
+    drive(monkeypatch, script, ticks=3)
+    assert len(warnings) == 2
+
+
+def test_a_labeled_workspace_never_warns(monkeypatch):
+    warnings = []
+    monkeypatch.setattr(loop.logger, "warning",
+                        lambda msg, *a: warnings.append(msg % a if a else msg))
+    drive(monkeypatch, [snap()], ticks=4)
+    assert warnings == []
+
+
 def test_sleep_gap_closes_open_runs_at_the_last_good_poll(monkeypatch):
     # Two good polls at the normal 2s step, then a 60s jump that looks like a
     # sleep/suspend. Every tick after the first would look like a gap at a

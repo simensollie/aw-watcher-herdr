@@ -79,13 +79,22 @@ def extract_attention(snapshot: dict) -> Attention | None:
 
     Returning None (rather than guessing) is deliberate: the caller emits
     nothing, leaving an honest gap in the timeline.
+
+    None means exactly two things: nothing is focused, or the focused id names
+    a workspace this snapshot does not describe (an inconsistent snapshot). An
+    unlabeled workspace is NOT one of them: it is recorded with an empty label,
+    the same way _desired() records it with app "" in the fleet bucket. Anything
+    else would stop all attention recording for as long as that workspace stayed
+    focused. This module is pure and has no logger, so making that visible is
+    the caller's job (see main.run).
     """
     ws_id = snapshot.get("focused_workspace_id")
     if not ws_id:
         return None
-    label = workspace_labels(snapshot).get(ws_id)
-    if not label:
+    labels = workspace_labels(snapshot)
+    if ws_id not in labels:
         return None
+    label = labels[ws_id]
 
     pane_id = snapshot.get("focused_pane_id")
     pane = _index(snapshot.get("panes"), "pane_id").get(pane_id) if pane_id else None
