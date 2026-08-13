@@ -16,7 +16,7 @@ It reads herdr's local API, so it needs **no macOS Accessibility permission**.
 
 | Platform | Transport | Install | Verified |
 |---|---|---|---|
-| macOS | Unix socket | launchd agent (or aw-qt on AW 0.14.x) | yes |
+| macOS | Unix socket | launchd agent (or aw-qt on AW 0.14.x) | transport yes, install route not yet |
 | Linux | Unix socket | aw-qt module | no |
 | Windows | `herdr api snapshot` | aw-qt module | no |
 
@@ -25,8 +25,11 @@ appears only in a query recipe, never in the data path. On Windows herdr uses a
 named pipe, which CPython cannot open, so the watcher shells out to herdr's CLI
 wrapper instead; that is the route herdr's own documentation recommends.
 
-Only macOS is verified end to end. Linux and Windows are supported by design but
-untested, so treat them as unproven.
+Only macOS is verified, and only for the data path: the watcher was run against
+an isolated `aw-server --testing` over both the socket and the CLI transport. The
+launchd LaunchAgent that `scripts/install.sh` writes has not yet been started in a
+login session, so treat that install route as unproven too. Linux and Windows are
+supported by design but untested.
 
 ## How it works
 
@@ -254,10 +257,14 @@ make verify-cli   # the same, through the CLI source used on Windows
 
 ## Status
 
-Implemented and verified end to end on macOS (launchd route, both the socket
-and CLI transports). See [the design spec](docs/superpowers/specs/2026-08-12-herdr-activitywatch-watcher-design.md)
+Implemented. Verified end to end on macOS against an isolated aw-server
+(`scripts/verify.sh`, both the socket and the CLI transport): live herdr
+snapshots in, correct `currentwindow` and `app.agent.activity` events out. The
+launchd LaunchAgent is written by `scripts/install.sh` but has not yet been
+exercised in a login session, so the install route itself is still unverified.
+See [the design spec](docs/superpowers/specs/2026-08-12-herdr-activitywatch-watcher-design.md)
 and [the implementation plan](docs/superpowers/plans/). macOS is the only
-verified platform; Linux and Windows are supported by design but untested.
+platform verified at all; Linux and Windows are supported by design but untested.
 
 ## Related
 

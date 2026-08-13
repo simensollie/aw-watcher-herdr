@@ -1048,7 +1048,7 @@ Create `tests/test_state_attention.py`:
 ```python
 """Attention extraction and title cleaning (spec §5, §5.1).
 
-Runs entirely offline against fixture snapshots — no socket, no aw-server.
+Runs entirely offline against fixture snapshots: no socket, no aw-server.
 The fixtures are the contract: a herdr snapshot-shape change breaks these.
 """
 import json
@@ -1193,8 +1193,8 @@ def clean_title(title: str | None) -> str | None:
     transition and fragments the attention timeline.
 
     Only Unicode category "So" (Symbol, other) is stripped, which covers the
-    spinner glyphs and emoji while leaving `~`, `[`, `(` and `/` intact — a
-    plain-shell title like `~/dev/alpha-service` must survive unharmed.
+    spinner glyphs and emoji while leaving `~`, `[`, `(` and `/` intact (a
+    plain-shell title like `~/dev/alpha-service` must survive unharmed).
     """
     if not title:
         return None
@@ -1920,7 +1920,7 @@ Create `tests/test_lock.py`:
 ```python
 """Single-instance lock (spec §10.3).
 
-Two supervisors can start this watcher — launchd and aw-qt — and two copies
+Two supervisors can start this watcher (launchd and aw-qt), and two copies
 running would silently double every fleet event. The fleet bucket cannot detect
 that, because overlapping events are expected and correct there.
 
@@ -1996,7 +1996,7 @@ Create `aw_watcher_herdr/lock.py`:
 The watcher can be started by launchd or by aw-qt, and both running at once
 would double every event in the fleet bucket. Because overlapping events are
 correct and expected there (spec §6), nothing downstream could detect the
-duplication — so it is prevented here instead.
+duplication, so it is prevented here instead.
 
 Together with herdr.py and __main__.default_window_apps(), this is one of the
 three code sites spec §4.3 permits to branch on the platform.
@@ -3502,7 +3502,13 @@ git add scripts/ packaging/ Makefile README.md aw-watcher-herdr.toml.example doc
 git commit -m "feat: launchd installer, aw-qt install path, verify script, and docs"
 ```
 
-- [x] **Step 9: Install for real and confirm it records**
+- [ ] **Step 9: Install for real and confirm it records** (NOT PERFORMED)
+
+> Not performed. Declared out of scope by controller decision during execution:
+> the installer was written but never run, nothing was written to
+> `~/Library/LaunchAgents`, and no `launchctl` command was issued. The launchd
+> route is therefore unverified by execution and the README says so. A human runs
+> this step.
 
 ```bash
 ./scripts/install.sh

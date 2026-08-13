@@ -33,8 +33,8 @@ def clean_title(title: str | None) -> str | None:
     transition and fragments the attention timeline.
 
     Only Unicode category "So" (Symbol, other) is stripped, which covers the
-    spinner glyphs and emoji while leaving `~`, `[`, `(` and `/` intact — a
-    plain-shell title like `~/dev/alpha-service` must survive unharmed.
+    spinner glyphs and emoji while leaving `~`, `[`, `(` and `/` intact (a
+    plain-shell title like `~/dev/alpha-service` must survive unharmed).
     """
     if not title:
         return None

@@ -1,6 +1,6 @@
 """Attention extraction and title cleaning (spec §5, §5.1).
 
-Runs entirely offline against fixture snapshots — no socket, no aw-server.
+Runs entirely offline against fixture snapshots: no socket, no aw-server.
 The fixtures are the contract: a herdr snapshot-shape change breaks these.
 """
 import json

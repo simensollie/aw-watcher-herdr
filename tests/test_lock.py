@@ -1,6 +1,6 @@
 """Single-instance lock (spec §10.3).
 
-Two supervisors can start this watcher — launchd and aw-qt — and two copies
+Two supervisors can start this watcher (launchd and aw-qt), and two copies
 running would silently double every fleet event. The fleet bucket cannot detect
 that, because overlapping events are expected and correct there.
 

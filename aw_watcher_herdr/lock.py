@@ -3,7 +3,7 @@
 The watcher can be started by launchd or by aw-qt, and both running at once
 would double every event in the fleet bucket. Because overlapping events are
 correct and expected there (spec §6), nothing downstream could detect the
-duplication — so it is prevented here instead.
+duplication, so it is prevented here instead.
 
 Together with herdr.py and __main__.default_window_apps(), this is one of the
 three code sites spec §4.3 permits to branch on the platform.
