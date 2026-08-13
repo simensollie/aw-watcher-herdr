@@ -44,12 +44,12 @@ DEFAULT_CONFIG = f"""
 source = "auto"                # auto | socket | cli (nothing else)
 herdr_binary = "{DEFAULT_HERDR_BINARY}"
 poll_interval = 2.0            # seconds between snapshots, must be > 0
-pulsetime = 5.0
+pulsetime = 5.0                # heartbeat merge window, must be > 0
 generic_terminal_label = "{DEFAULT_GENERIC_LABEL}"
 fleet_enabled = true
 fleet_statuses = {json.dumps(list(DEFAULT_FLEET_STATUSES))}
-max_run_seconds = 43200.0
-gap_factor = 3.0
+max_run_seconds = 43200.0      # hard cap on one run, must be > 0
+gap_factor = 3.0               # sleep gap = gap_factor x poll_interval, must be > 1
 # Terminal app names for the gating query. Run --detect-terminal to find yours.
 # window_app = ["Ghostty"]
 # window_title = "herdr"
@@ -146,32 +146,86 @@ def load_config(args: argparse.Namespace) -> Config:
     return cfg
 
 
+def _positive_number(name: str, value, consequence: str) -> float:
+    """Value as a float, or a ConfigError naming the field and the consequence.
+
+    Every field validated through here shares one property: a non-positive or
+    non-numeric value makes the watcher record the wrong thing, or nothing, with
+    NOTHING in the running process complaining about it. That, not tidiness, is
+    the bar for validating a field at all (see _validate for the fields
+    deliberately left alone).
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ConfigError(f"{name}: {value!r} is not a number") from None
+    if number <= 0:
+        raise ConfigError(
+            f"{name} must be greater than 0 (got {value!r}); {consequence}")
+    return number
+
+
 def _validate(cfg: Config) -> None:
     """Reject unusable values, wherever they came from.
 
     The --source FLAG is guarded by argparse's choices, but the FILE value was
     copied straight out of the toml, so a typo there crashed the daemon inside
-    resolve_source instead of reporting a config error. poll_interval had no
-    floor at all: at 0 the loop calls time.sleep(0) and spins, pinning a core
-    and hammering herdr's API, and gap_threshold becomes 0, which silently
-    disables sleep/suspend detection (it is guarded by gap_threshold > 0).
+    resolve_source instead of reporting a config error.
+
+    Four numbers are validated because a non-positive value fails SILENTLY, each
+    in its own way (the consequence strings below spell them out). Deliberately
+    NOT validated, so the next reader does not have to re-derive it:
+
+      * `generic_terminal_label`: an empty label only makes titles blank. Wrong
+        looking, not wrong.
+      * `window_app`, `window_title`: read by --print-query only, never in the
+        data path, and empty already MEANS "do not gate on the window" (spec
+        §7.1).
+      * `socket_path`, `herdr_binary`: an empty string is falsy and both call
+        sites fall back to the documented default, so it cannot silently point
+        at nothing.
+      * `fleet_statuses`: an empty list is a plausible deliberate "track no
+        status", and rejecting an unrecognised status would break the day herdr
+        adds one. A bare string IS normalized (below), because tuple("done")
+        iterates the characters and matches nothing.
+      * `fleet_enabled`: any truthy or falsy value reads correctly as a bool.
     """
     if cfg.source not in SOURCE_CHOICES:
         raise ConfigError(
             f"source: {cfg.source!r} is not a valid source; expected one of "
             f"{', '.join(SOURCE_CHOICES)}")
 
-    try:
-        poll_interval = float(cfg.poll_interval)
-    except (TypeError, ValueError):
+    cfg.poll_interval = _positive_number(
+        "poll_interval", cfg.poll_interval,
+        "0 would spin the poll loop, pinning a core and hammering herdr's API, "
+        "and would disable sleep/suspend detection")
+    cfg.pulsetime = _positive_number(
+        "pulsetime", cfg.pulsetime,
+        "aw-server merges a heartbeat into the previous event only within "
+        "pulsetime, so 0 leaves every attention event at zero duration and the "
+        "timeline reports no time at all")
+    cfg.max_run_seconds = _positive_number(
+        "max_run_seconds", cfg.max_run_seconds,
+        "the cap is checked as elapsed >= max_run_seconds, so 0 expires every "
+        "agent run on the very next poll and no run is ever recorded whole")
+    cfg.gap_factor = _positive_number(
+        "gap_factor", cfg.gap_factor,
+        "the sleep threshold is gap_factor x poll_interval, so 0 disables "
+        "sleep/suspend detection (the loop guards it with gap_threshold > 0)")
+    if cfg.gap_factor <= 1:
+        # Measured: at or below 1 the threshold is at or below one poll
+        # interval, so every normal tick looks like a sleep gap, every open run
+        # is closed at the last good poll with a zero duration, and FleetWriter
+        # drops all of them. The fleet bucket then records nothing whatsoever.
         raise ConfigError(
-            f"poll_interval: {cfg.poll_interval!r} is not a number") from None
-    if poll_interval <= 0:
-        raise ConfigError(
-            f"poll_interval must be greater than 0 seconds (got "
-            f"{cfg.poll_interval!r}); 0 would spin the poll loop and disable "
-            f"sleep/suspend detection")
-    cfg.poll_interval = poll_interval
+            f"gap_factor must be greater than 1 (got {cfg.gap_factor!r}); at or "
+            f"below 1 every normal poll counts as a sleep gap, which closes "
+            f"every agent run instantly and leaves the fleet bucket empty")
+
+    # Same tolerance as window_app, for the same reason: a bare string would be
+    # iterated character by character, matching no status at all.
+    if isinstance(cfg.fleet_statuses, str):
+        cfg.fleet_statuses = [cfg.fleet_statuses]
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

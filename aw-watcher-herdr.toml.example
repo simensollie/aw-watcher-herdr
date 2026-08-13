@@ -15,7 +15,7 @@ source = "auto"                # nothing but auto, socket or cli is accepted
 herdr_binary = "herdr"
 
 poll_interval = 2.0            # seconds between snapshots, must be > 0
-pulsetime = 5.0                # heartbeat merge window (attention bucket)
+pulsetime = 5.0                # heartbeat merge window (attention bucket), must be > 0
 generic_terminal_label = "terminal"   # title for panes with no agent
 
 # --- agent fleet bucket ---
@@ -23,8 +23,10 @@ fleet_enabled = true
 # Which herdr agent states become intervals. `idle` is the resting state and
 # would dwarf everything else; `unknown` does not prove completion.
 fleet_statuses = ["working", "blocked", "done"]
-max_run_seconds = 43200.0      # hard cap on one run (12h), guards a wedged watcher
-gap_factor = 3.0               # gap > gap_factor x poll_interval => machine slept
+max_run_seconds = 43200.0      # hard cap on one run (12h), guards a wedged watcher, must be > 0
+gap_factor = 3.0               # gap > gap_factor x poll_interval => machine slept.
+                               # Must be > 1: at or below 1 every normal poll counts
+                               # as a gap and the fleet bucket stays empty.
 
 # --- used by --print-query ---
 # The terminal you run herdr in, as your window watcher names it. That differs

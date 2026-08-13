@@ -17,6 +17,7 @@ from contextlib import contextmanager
 
 import pytest
 
+from aw_watcher_herdr import herdr as herdr_module
 from aw_watcher_herdr.herdr import (
     CliSource, HerdrError, HerdrUnavailable, UnixSocketSource, resolve_source,
 )
@@ -118,6 +119,15 @@ def test_socket_path_from_config_is_tilde_expanded():
     source = UnixSocketSource("~/.config/herdr/herdr.sock")
     assert not source.socket_path.startswith("~")
     assert source.socket_path == os.path.expanduser("~/.config/herdr/herdr.sock")
+
+
+def test_the_default_socket_path_has_exactly_one_home():
+    # default_socket_path() wrapped the same expanduser call UnixSocketSource now
+    # makes itself, and two homes for one rule is how they drift apart (the
+    # supplied path went unexpanded for exactly that reason). The constant stays,
+    # the wrapper goes.
+    assert herdr_module.DEFAULT_SOCKET_PATH == "~/.config/herdr/herdr.sock"
+    assert not hasattr(herdr_module, "default_socket_path")
 
 
 def test_absolute_socket_path_is_left_alone(tmp_path):

@@ -475,7 +475,9 @@ git commit -m "feat: package scaffolding, config loading, and CLI"
 - Consumes: nothing from earlier tasks.
 - Produces:
   - `HerdrError(Exception)`, `HerdrUnavailable(HerdrError)`
-  - `default_socket_path() -> str`
+  - `DEFAULT_SOCKET_PATH` (expanded by `UnixSocketSource` itself, so a configured
+    `~` works too; the `default_socket_path()` wrapper this plan first specified
+    was removed in the PR review pass as a second home for one rule)
   - `SnapshotSource` protocol with `snapshot() -> dict`
   - `UnixSocketSource(socket_path: str | None = None, timeout: float = 5.0)` with `request(method, params=None) -> dict` and `snapshot() -> dict`
   - `CliSource(binary: str = "herdr", timeout: float = 10.0)` with `snapshot() -> dict`
@@ -778,10 +780,6 @@ class SnapshotSource(Protocol):
         ...
 
 
-def default_socket_path() -> str:
-    return os.path.expanduser(DEFAULT_SOCKET_PATH)
-
-
 def _parse_envelope(raw, method: str) -> dict:
     """Turn a raw response into its `result` object, or raise.
 
@@ -823,7 +821,7 @@ class UnixSocketSource:
     """Connect-per-request client for the herdr API socket (macOS, Linux)."""
 
     def __init__(self, socket_path: str | None = None, timeout: float = 5.0):
-        self.socket_path = socket_path or default_socket_path()
+        self.socket_path = os.path.expanduser(socket_path or DEFAULT_SOCKET_PATH)
         self.timeout = timeout
         self._seq = 0
 

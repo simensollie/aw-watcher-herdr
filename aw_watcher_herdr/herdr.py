@@ -59,10 +59,6 @@ class SnapshotSource(Protocol):
         ...
 
 
-def default_socket_path() -> str:
-    return os.path.expanduser(DEFAULT_SOCKET_PATH)
-
-
 def _parse_envelope(raw, method: str) -> dict:
     """Turn a raw response into its `result` object, or raise.
 

@@ -219,12 +219,12 @@ override the file.
 | `socket_path` | `~/.config/herdr/herdr.sock` | herdr API socket (socket source); a leading `~` is expanded |
 | `herdr_binary` | `herdr` | Executable invoked by the CLI source |
 | `poll_interval` | `2.0` | Seconds between snapshots; must be greater than 0 |
-| `pulsetime` | `5.0` | Heartbeat merge window (attention bucket) |
+| `pulsetime` | `5.0` | Heartbeat merge window (attention bucket); must be greater than 0 |
 | `generic_terminal_label` | `terminal` | Title for panes with no agent |
 | `fleet_enabled` | `true` | Emit the agent-fleet bucket at all |
-| `fleet_statuses` | `["working", "blocked", "done"]` | Statuses that open a run |
-| `max_run_seconds` | `43200` | Hard cap on a single run |
-| `gap_factor` | `3.0` | Multiple of `poll_interval` treated as a sleep gap |
+| `fleet_statuses` | `["working", "blocked", "done"]` | Statuses that open a run; a bare string is accepted as a one-element list |
+| `max_run_seconds` | `43200` | Hard cap on a single run; must be greater than 0 |
+| `gap_factor` | `3.0` | Multiple of `poll_interval` treated as a sleep gap; must be greater than 1 |
 | `window_app` | `["Ghostty"]` on macOS, `[]` elsewhere | Terminal names for `--print-query` |
 | `window_title` | unset | Optional title regex for `--print-query` |
 
@@ -256,6 +256,7 @@ make verify-cli   # the same, through the CLI source used on Windows
 | Query returns nothing on Linux/Wayland | The stock window watcher is X11 only. Use `aw-watcher-window-wayland` or drop the frontmost filter. |
 | Query returns zero hours, no error | A `find_bucket` without the hostname argument matched a stale bucket from an earlier hostname. Re-generate the query with `--print-query`. |
 | `Unable to find bucket matching ...` | The hostname in the query is not the one your watchers recorded. Take it from your bucket names in the ActivityWatch UI. |
+| Exits immediately with a `poll_interval`/`gap_factor`/... message | A config value would fail silently (a spinning loop, an empty bucket, a zero-duration timeline), so it is rejected instead of clamped. The message says which key and why. |
 
 ## Status
 
