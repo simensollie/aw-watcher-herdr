@@ -469,9 +469,13 @@ system process, so something is always installed on the machine; there is no
 route that drops a file into ActivityWatch and has it loaded. What exists instead
 is aw-qt's module discovery, and that is close enough to serve as one.
 
-Two routes are supported and both are documented.
+Two routes are supported and both are documented. **On macOS the default is the
+launchd agent (§10.2), which works on the current stable ActivityWatch.** The
+aw-qt route (§10.1) exists because it is the only answer for Linux and Windows;
+on macOS it is an option that becomes available on ActivityWatch 0.14.x, not a
+prerequisite for anything.
 
-### 10.1 aw-qt module (all platforms)
+### 10.1 aw-qt module (Linux and Windows; macOS on 0.14.x)
 
 `aw-qt` discovers executables named `aw-*` both alongside its own binary and on
 `PATH`, lists them in the tray menu, and starts them when they appear in
@@ -480,17 +484,33 @@ Two routes are supported and both are documented.
 unit and no Windows startup entry is needed, which is why this is the **only**
 install route documented for Linux and Windows in v1.
 
-**Version requirement.** The commit adding `~/.local/bin`, `/opt/homebrew/bin`
-and `/usr/local/bin` to macOS module discovery is dated 2026-03-12, after the
-0.13.2 release of 2024-10-05. On 0.13.2 a GUI-launched aw-qt has a minimal `PATH`
-and logs `Found 0 system modules`, so this route requires **ActivityWatch 0.14.x**
-(0.14.0b3, 2026-07-28, at time of writing). The same 0.14 line also added
-`.bat`/`.cmd` discovery on Windows and auto-restart of crashed watchers.
+**Why this needs 0.14.x on macOS.** ActivityWatch is a login item, so aw-qt
+inherits launchd's default environment. Measured on the running process:
+
+```
+$ ps eww -p <aw-qt pid> | tr ' ' '\n' | grep ^PATH=
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+```
+
+All four are SIP-protected, so on 0.13.2 there is no directory a user can write
+to that aw-qt searches, which is why its log reads `Found 0 system modules`. The
+commit adding `~/.local/bin`, `/opt/homebrew/bin` and `/usr/local/bin` to the
+macOS search is dated 2026-03-12, after the 0.13.2 release of 2024-10-05, so this
+route needs **0.14.x** (0.14.0b3, 2026-07-28, at time of writing). The same line
+added `.bat`/`.cmd` discovery on Windows and auto-restart of crashed watchers.
+
+Linux and Windows are unaffected by that commit, because aw-qt there is normally
+launched from a session that already has a user `PATH`.
+
+**Rejected workaround.** `/Applications/ActivityWatch.app/Contents/MacOS/` is
+writable and is scanned by `_discover_modules_bundled` on 0.13.2. Installing
+there breaks the bundle's code signature and is erased by every ActivityWatch
+update, which is the exact failure §10.2 was designed to avoid. Do not do this.
 
 **Counterargument:** 0.14.x is a beta, and a watcher managed by aw-qt stops
 whenever ActivityWatch stops.
 
-### 10.2 launchd LaunchAgent (macOS)
+### 10.2 launchd LaunchAgent (macOS, the default)
 
 As the predecessor: a self-contained venv under `~/.local/share/aw-watcher-herdr`
 installed by `scripts/install.sh`, surviving ActivityWatch updates and requiring
@@ -498,6 +518,13 @@ no edits to `/Applications/ActivityWatch.app`. It works on 0.13.2 today and is
 independent of ActivityWatch's lifecycle. The installer additionally symlinks the
 entry point into `~/.local/bin`, so route 10.1 becomes available as soon as
 ActivityWatch is upgraded, without reinstalling.
+
+A second advantage on Apple Silicon: the installed aw-qt 0.13.2 is an `x86_64`
+binary running under Rosetta, and a watcher it spawns can inherit that
+translation preference. launchd starts the venv interpreter directly, so the
+watcher runs natively regardless of how ActivityWatch itself was built. The venv
+must therefore be created with a native `arm64` Python, which `install.sh`
+asserts.
 
 The installer is materially simpler than the predecessor's: no Accessibility
 prompt, no `aw-watcher-herdr.app` interpreter wrapper (which existed purely to
