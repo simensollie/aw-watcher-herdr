@@ -3,20 +3,57 @@
 An [ActivityWatch](https://activitywatch.net/) watcher for
 [herdr](https://herdr.dev), the terminal workspace manager for AI coding agents.
 
-It records two things:
+## Why this exists
 
-- **Attention:** which herdr workspace and agent session you are looking at.
-- **Agent fleet:** what every agent is doing *concurrently*, on which project,
-  including how long agents sit blocked waiting on you and how long finished
-  work goes unnoticed.
+Conventional time tracking rests on two assumptions: one window is one task, and
+work happens while you are watching it. Coding agents in a multiplexer break both.
 
-It reads herdr's local API, so it needs **no macOS Accessibility permission**.
+ActivityWatch's window watcher sees one terminal window called `Ghostty`, for
+eight hours, however many projects passed through it. herdr keeps each project in
+its own workspace inside that single window, so the entire project dimension is
+invisible from outside: a day spent across six codebases records as one
+undifferentiated block.
+
+Agents break the second assumption. They keep working while you look away, several
+at once, so "how long was this window in front of me" stops measuring work done.
+Worse, the moments that cost you most are the ones where nothing is happening on
+your screen: an agent blocked waiting on your answer, or an agent that finished
+while you were somewhere else.
+
+So this watcher records two different things and deliberately keeps them apart:
+
+- **Attention** is where *you* were. One workspace at a time, the project in front
+  of you, the task its agent was on, merged into a single timeline you can
+  intersect with AFK and frontmost like any other ActivityWatch data.
+- **Agent fleet** is what your *agents* were doing. One interval per agent per
+  status, freely overlapping, never gated on whether you were present. This is
+  concurrency, so it is meant to exceed wall-clock time.
+
+Keeping them in separate buckets is the point. Merged, parallel agent work would
+inflate your own hours; gated on presence, the agent work that happened while you
+were away would vanish, which is exactly the work worth knowing about.
+
+## What you can answer with it
+
+| Question | How |
+|---|---|
+| Where did my day go, per project, through one terminal window? | Attention bucket, gated on AFK and frontmost |
+| How much agent work ran in parallel with mine? | Fleet bucket, `status = working`, ungated |
+| How long did agents sit blocked waiting on me? | Fleet bucket, `status = blocked`. Your response latency, measured |
+| How long did finished work sit unnoticed? | Fleet bucket, `status = done`. herdr clears `done` when you focus the tab, so the duration is exactly how long you took to notice |
+| Which projects eat attention out of proportion to their agent time? | Both buckets, grouped by `app` |
+
+Ready-made queries for the first four are in [Queries](#queries), and
+`--print-query` prints them with your own hostname and terminal filled in.
+
+It reads herdr's local API rather than the window server, so it needs **no macOS
+Accessibility permission** and runs from a detached background agent.
 
 ## Platform support
 
 | Platform | Transport | Install | Verified |
 |---|---|---|---|
-| macOS | Unix socket | launchd agent (or aw-qt on AW 0.14.x) | transport yes, install route not yet |
+| macOS | Unix socket | launchd agent (or aw-qt on AW 0.14.x) | yes, end to end |
 | Linux | Unix socket | aw-qt module | no |
 | Windows | `herdr api snapshot` | aw-qt module | no |
 
@@ -25,11 +62,12 @@ appears only in a query recipe, never in the data path. On Windows herdr uses a
 named pipe, which CPython cannot open, so the watcher shells out to herdr's CLI
 wrapper instead; that is the route herdr's own documentation recommends.
 
-Only macOS is verified, and only for the data path: the watcher was run against
-an isolated `aw-server --testing` over both the socket and the CLI transport. The
-launchd LaunchAgent that `scripts/install.sh` writes has not yet been started in a
-login session, so treat that install route as unproven too. Linux and Windows are
-supported by design but untested.
+macOS is verified end to end, on both transports and through both an isolated
+`aw-server --testing` and a real one: `scripts/install.sh`, the LaunchAgent it
+loads, live herdr snapshots in, correct events out. Linux and Windows are
+supported by design but have never been executed. Nothing longer than a short
+session has been measured, so the 12-hour run cap and the sleep/suspend gap
+handling rest on unit tests rather than on a real multi-day run.
 
 ## How it works
 
@@ -127,11 +165,35 @@ code signature and is erased by every ActivityWatch update.
 Running both routes at once is prevented by a single-instance lock: the second
 copy exits rather than doubling every event in the fleet bucket.
 
+### What "installed" means in ActivityWatch
+
+There is nothing to enable on the ActivityWatch side. ActivityWatch has no plugin
+system: a watcher is just a process that creates its own buckets and posts events,
+so it registers itself the first time it connects. Two consequences:
+
+- Your data appears in the web UI at <http://localhost:5600> under **Raw Data**,
+  as `aw-watcher-herdr_<host>` and `aw-watcher-herdr-agents_<host>`, and in the
+  query view. No setting, no restart of aw-server.
+- The watcher does **not** appear in the aw-qt tray menu on the launchd route. The
+  tray only lists modules aw-qt itself discovered and supervises, and launchd is
+  supervising this one instead. That is a cosmetic difference, not a broken
+  install. Use the aw-qt route above if you want the tray entry.
+
+The stock Activity view will not show this data usefully (it assumes one
+non-overlapping timeline per bucket and knows nothing about workspaces), which is
+why the [Queries](#queries) below exist.
+
 ### Check it is working
 
 ```bash
-aw-watcher-herdr --snapshot | head -3
+aw-watcher-herdr --snapshot | head -3          # can it read herdr?
+tail -5 ~/Library/Logs/activitywatch/aw-watcher-herdr.log
+launchctl list | grep aw-watcher-herdr          # pid, and 0 as the last exit status
+curl -s "http://localhost:5600/api/0/buckets/aw-watcher-herdr_$(hostname)/events?limit=1"
 ```
+
+The last command returning an event with a non-zero `duration` is the real proof:
+herdr read, event written, bucket registered.
 
 ## Queries
 
@@ -260,14 +322,19 @@ make verify-cli   # the same, through the CLI source used on Windows
 
 ## Status
 
-Implemented. Verified end to end on macOS against an isolated aw-server
-(`scripts/verify.sh`, both the socket and the CLI transport): live herdr
-snapshots in, correct `currentwindow` and `app.agent.activity` events out. The
-launchd LaunchAgent is written by `scripts/install.sh` but has not yet been
-exercised in a login session, so the install route itself is still unverified.
+Implemented and running. Verified end to end on macOS in three ways: against an
+isolated aw-server on both transports (`scripts/verify.sh`), and as an installed
+LaunchAgent writing to a real aw-server, where a detached background agent reads
+herdr's socket and produces merged `currentwindow` attention events alongside
+overlapping `app.agent.activity` fleet events.
+
+Not verified: Linux and Windows, which are supported by design but have never
+been executed, and anything longer than a short session, so the run cap and the
+sleep/suspend gap handling rest on unit tests with a scripted clock rather than
+on a real multi-day run.
+
 See [the design spec](docs/superpowers/specs/2026-08-12-herdr-activitywatch-watcher-design.md)
-and [the implementation plan](docs/superpowers/plans/). macOS is the only
-platform verified at all; Linux and Windows are supported by design but untested.
+and [the implementation plan](docs/superpowers/plans/).
 
 ## Related
 
