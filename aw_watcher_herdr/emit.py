@@ -20,7 +20,7 @@ from datetime import datetime
 
 from aw_core.models import Event
 
-from .state import Attention, CompletedRun
+from .state import Attention, CompletedRun, display_title
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,11 @@ class AttentionWriter:
             # app/title rather than custom keys: aw merges heartbeats on these
             # and its categorization rules match them (spec §5).
             "app": attention.workspace_label,
-            "title": attention.title or self._generic,
+            "title": display_title(attention.workspace_label,
+                                   attention.tab_label,
+                                   attention.title or self._generic),
+            "tab": attention.tab_label,
+            "tab_id": attention.tab_id,
             "agent": attention.agent,
             "agent_status": attention.agent_status,
             "workspace_id": attention.workspace_id,
@@ -92,7 +96,10 @@ class FleetWriter:
                 duration=run.end - run.start,
                 data={
                     "app": run.key.workspace_label,
-                    "title": run.title or "",
+                    "title": display_title(run.key.workspace_label,
+                                           run.tab_label, run.title),
+                    "tab": run.tab_label,
+                    "tab_id": run.key.tab_id,
                     "status": run.key.status,
                     "agent": run.key.agent,
                     "cwd": run.key.cwd,

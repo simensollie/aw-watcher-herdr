@@ -17,17 +17,28 @@ def load(name="snapshot_basic.json"):
     return json.loads((FIX / name).read_text())
 
 
-def snap(*agents, workspaces=None):
-    """Build a minimal snapshot from (pane_id, ws_id, status, title) tuples."""
+DEFAULT_TABS = {"w1:t1": "1", "w2:t1": "import", "w2:t2": "retry",
+                "w3:t1": "guide"}
+
+
+def snap(*agents, workspaces=None, tabs=None):
+    """Build a minimal snapshot from agent tuples.
+
+    Each tuple is (pane_id, ws_id, status, title) with an optional fifth
+    element naming the tab; it defaults to the workspace's first tab.
+    """
     workspaces = workspaces or {"w1": "alpha-service", "w2": "beta app",
                                 "w3": "gamma docs"}
+    tabs = DEFAULT_TABS if tabs is None else tabs
     return {
         "workspaces": [{"workspace_id": k, "label": v} for k, v in workspaces.items()],
+        "tabs": [{"tab_id": k, "label": v} for k, v in tabs.items()],
         "agents": [
-            {"pane_id": p, "workspace_id": w, "agent": "claude",
-             "agent_status": s, "cwd": f"/home/dev/{w}",
-             "terminal_title_stripped": t}
-            for (p, w, s, t) in agents
+            {"pane_id": a[0], "workspace_id": a[1], "agent": "claude",
+             "agent_status": a[2], "cwd": f"/home/dev/{a[1]}",
+             "tab_id": a[4] if len(a) > 4 else f"{a[1]}:t1",
+             "terminal_title_stripped": a[3]}
+            for a in agents
         ],
     }
 
@@ -139,6 +150,55 @@ def test_pane_moved_to_another_workspace_closes_and_reopens():
     assert t.open_count == 1
 
 
+def test_run_carries_the_tab_label():
+    t = FleetTracker()
+    t.update(snap(("w2:p1", "w2", "working", "task")), T0)
+    closed = t.update(snap(), at(30))
+    assert closed[0].key.tab_id == "w2:t1"
+    assert closed[0].tab_label == "import"
+
+
+def test_tab_rename_does_not_segment_a_run():
+    # The label is display, not identity: renaming a tab mid-task must not
+    # split the interval, exactly as a title rewrite does not (spec §6.1).
+    t = FleetTracker()
+    t.update(snap(("w2:p1", "w2", "working", "task")), T0)
+    closed = t.update(
+        snap(("w2:p1", "w2", "working", "task"),
+             tabs={"w2:t1": "retry logic"}), at(45))
+    assert closed == []
+    assert t.open_count == 1
+
+
+def test_last_tab_label_wins_when_the_run_closes():
+    t = FleetTracker()
+    t.update(snap(("w2:p1", "w2", "working", "task")), T0)
+    t.update(snap(("w2:p1", "w2", "working", "task"),
+                  tabs={"w2:t1": "retry logic"}), at(45))
+    closed = t.update(snap(), at(60))
+    assert closed[0].tab_label == "retry logic"
+
+
+def test_pane_moved_to_another_tab_closes_and_reopens():
+    # A different tab is a different context, the same way a different
+    # workspace is, so the interval must not straddle the move.
+    t = FleetTracker()
+    t.update(snap(("w2:p1", "w2", "working", "task")), T0)
+    closed = t.update(snap(("w2:p1", "w2", "working", "task", "w2:t2")), at(45))
+    assert len(closed) == 1
+    assert closed[0].key.tab_id == "w2:t1"
+    assert t.open_count == 1
+
+
+def test_an_unlabeled_tab_still_opens_a_run():
+    t = FleetTracker()
+    t.update(snap(("w2:p1", "w2", "working", "task"), tabs={}), T0)
+    closed = t.update(snap(), at(30))
+    assert len(closed) == 1
+    assert closed[0].key.tab_id == "w2:t1"
+    assert closed[0].tab_label == ""
+
+
 # --- concurrency ------------------------------------------------------------
 
 def test_four_concurrent_panes_track_independently():
@@ -194,14 +254,14 @@ def test_custom_status_set_is_respected():
 
 
 def test_run_key_is_hashable_and_comparable():
-    k1 = RunKey("w1:p1", "alpha-service", "working", "claude", "/home/dev/w1")
-    k2 = RunKey("w1:p1", "alpha-service", "working", "claude", "/home/dev/w1")
+    k1 = RunKey("w1:p1", "w1:t1", "alpha-service", "working", "claude", "/home/dev/w1")
+    k2 = RunKey("w1:p1", "w1:t1", "alpha-service", "working", "claude", "/home/dev/w1")
     assert k1 == k2 and len({k1, k2}) == 1
 
 
 def test_completed_run_duration_is_seconds():
-    k = RunKey("w1:p1", "alpha-service", "working", "claude", "/home/dev/w1")
-    assert CompletedRun(k, "t", T0, at(12.5)).duration_seconds == 12.5
+    k = RunKey("w1:p1", "w1:t1", "alpha-service", "working", "claude", "/home/dev/w1")
+    assert CompletedRun(k, "t", "1", T0, at(12.5)).duration_seconds == 12.5
 
 
 def test_real_fixture_opens_only_the_working_agent():

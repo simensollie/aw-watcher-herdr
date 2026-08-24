@@ -89,10 +89,20 @@ Type `currentwindow`, one event at a time, heartbeat-merged.
 | Field | Example | Notes |
 |---|---|---|
 | `app` | `beta app` | Focused workspace label (the project dimension) |
-| `title` | `Add retry logic to the import job` | Focused pane's agent task, or `terminal` |
+| `title` | `beta app · import · Add retry logic to the import job` | Space, tab and the focused pane's agent task (or `terminal`), composed |
+| `tab` | `import` | Focused tab label, `1` if never renamed |
 | `agent` | `claude` | Agent kind, or null |
 | `agent_status` | `working` | herdr's own classification |
-| `workspace_id` / `pane_id` | `w2` / `w2:p1` | Opaque ids, diagnostic |
+| `workspace_id` / `tab_id` / `pane_id` | `w2` / `w2:t1` / `w2:p1` | Opaque ids, diagnostic |
+
+`title` repeats the space that `app` already carries because ActivityWatch
+renders `app` and `title` only: a field outside those two is invisible in the
+timeline and in the "Top window titles" summary, which shows titles alone. The
+tab is therefore folded into the title **and** kept as `tab`, so a query can
+group by tab without parsing the string apart. An unlabeled segment is dropped
+rather than rendered as a bare separator; a default ordinal label (`1`) is not
+empty and is kept, since dropping it would give two tabs of one space the same
+title and merge unrelated work.
 
 Events are keyed on the workspace **label**, not the working directory: two
 workspaces can share one `cwd` while representing different contexts, and
@@ -108,11 +118,18 @@ looks like.
 | Field | Example |
 |---|---|
 | `app` | `beta app` |
-| `title` | `Add retry logic to the import job` |
+| `title` | `beta app · import · Add retry logic to the import job` |
+| `tab` | `import` |
 | `status` | `working` / `blocked` / `done` |
 | `agent` | `claude` |
 | `cwd` | `/home/dev/beta-app` |
-| `pane_id` | `w2:p1` |
+| `tab_id` / `pane_id` | `w2:t1` / `w2:p1` |
+
+Titles are composed identically in both buckets, so one task reads the same in
+each. Moving a pane to another tab closes the run and opens a new one, the same
+way moving it to another workspace does; **renaming** a tab does not, so a
+rename relabels the interval it happened in rather than splitting it. That is
+the same rule the terminal title already follows.
 
 `idle` and `unknown` are not recorded: `idle` is the resting state and would
 dwarf everything else, and `unknown` does not prove completion.

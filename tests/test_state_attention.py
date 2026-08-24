@@ -8,7 +8,12 @@ from pathlib import Path
 
 import pytest
 
-from aw_watcher_herdr.state import Attention, clean_title, extract_attention
+from aw_watcher_herdr.state import (
+    Attention,
+    clean_title,
+    display_title,
+    extract_attention,
+)
 
 FIX = Path(__file__).parent / "fixtures"
 
@@ -60,6 +65,36 @@ def test_glyph_variants_of_one_task_collapse_to_one_title():
     assert len({clean_title(v) for v in variants}) == 1
 
 
+# --- display title composition ----------------------------------------------
+
+@pytest.mark.parametrize("app,tab,title,expected", [
+    # The ordinary case: space, tab, terminal name.
+    ("certainqms", "QMS", "Rewrite the guide", "certainqms \u00b7 QMS \u00b7 Rewrite the guide"),
+    # A default ordinal tab label carries little meaning but is kept verbatim:
+    # dropping it would collapse two tabs of one space into one title and
+    # silently merge unrelated work.
+    ("aw-watcher-herdr", "1", "Session names", "aw-watcher-herdr \u00b7 1 \u00b7 Session names"),
+    # Empty segments are skipped rather than rendered as a bare separator,
+    # which would read as a missing value instead of an absent one.
+    ("certainqms", "", "Rewrite the guide", "certainqms \u00b7 Rewrite the guide"),
+    ("certainqms", "QMS", "", "certainqms \u00b7 QMS"),
+    ("", "QMS", "Rewrite the guide", "QMS \u00b7 Rewrite the guide"),
+    ("certainqms", None, None, "certainqms"),
+    (None, None, None, ""),
+    # Whitespace-only is absent, not present-but-blank.
+    ("certainqms", "   ", "Rewrite the guide", "certainqms \u00b7 Rewrite the guide"),
+])
+def test_display_title(app, tab, title, expected):
+    assert display_title(app, tab, title) == expected
+
+
+def test_display_title_does_not_mangle_a_title_containing_the_separator():
+    # A hyphen separator could not survive this: the space is called
+    # `aw-watcher-herdr`, so a hyphenated composition is unsplittable.
+    assert display_title("aw-watcher-herdr", "1", "fix a - b ordering") == (
+        "aw-watcher-herdr \u00b7 1 \u00b7 fix a - b ordering")
+
+
 # --- attention extraction ---------------------------------------------------
 
 def test_extracts_focused_workspace_and_agent():
@@ -67,6 +102,8 @@ def test_extracts_focused_workspace_and_agent():
     assert a == Attention(
         workspace_label="gamma docs",
         workspace_id="w3",
+        tab_id="w3:t1",
+        tab_label="guide",
         pane_id="w3:p1",
         title="Rewrite the onboarding guide",
         agent="claude",
@@ -110,6 +147,43 @@ def test_missing_focused_pane_still_yields_the_workspace():
     assert a.workspace_label == "gamma docs"
     assert a.pane_id is None
     assert a.title is None
+
+
+def test_attention_tab_label_comes_from_the_focused_panes_own_tab():
+    # The pane, not `focused_tab_id`, is the authority on which tab a pane is
+    # in: a snapshot caught mid-move can disagree, and attributing the pane's
+    # work to a tab it has left would mislabel the interval.
+    snap = load("snapshot_basic.json")
+    snap["focused_tab_id"] = "w1:t1"
+    a = extract_attention(snap)
+    assert a.tab_id == "w3:t1"
+    assert a.tab_label == "guide"
+
+
+def test_attention_falls_back_to_focused_tab_id_when_no_pane_is_focused():
+    snap = load("snapshot_basic.json")
+    snap["focused_pane_id"] = None
+    a = extract_attention(snap)
+    assert a.tab_id == "w3:t1"
+    assert a.tab_label == "guide"
+
+
+def test_attention_tab_label_is_empty_when_the_tab_is_absent_from_the_list():
+    # An inconsistent snapshot must not stop attention recording: the same
+    # reasoning as an unlabeled workspace (see below).
+    snap = load("snapshot_basic.json")
+    snap["tabs"] = [t for t in snap["tabs"] if t["tab_id"] != "w3:t1"]
+    a = extract_attention(snap)
+    assert a is not None
+    assert a.tab_id == "w3:t1"
+    assert a.tab_label == ""
+
+
+def test_attention_keeps_a_default_ordinal_tab_label():
+    snap = load("snapshot_basic.json")
+    snap["focused_workspace_id"] = "w1"
+    snap["focused_pane_id"] = "w1:p1"
+    assert extract_attention(snap).tab_label == "1"
 
 
 def _blank_the_label(snap, ws_id="w3"):
