@@ -106,6 +106,23 @@ def test_fleet_and_attention_compose_a_title_identically():
             == c.inserted[0][1][0].data["title"])
 
 
+def test_fleet_and_attention_use_the_same_generic_label_when_title_is_empty():
+    # The identical-composition rule must hold for an empty terminal name too:
+    # attention already folds in generic_terminal_label, and fleet must as well,
+    # or the two buckets diverge on the same pane.
+    c = FakeClient()
+    AttentionWriter(c, "attention", pulsetime=5.0,
+                    generic_terminal_label="terminal").write(
+        Attention("beta app", "w2", "w2:t1", "import", "w2:p1", None,
+                  "claude", "working"), T0)
+    FleetWriter(c, "fleet", generic_terminal_label="terminal").write(
+        [run(title="")])
+    assert c.heartbeats[0][1].data["title"] == (
+        "beta app \u00b7 import \u00b7 terminal")
+    assert (c.heartbeats[0][1].data["title"]
+            == c.inserted[0][1][0].data["title"])
+
+
 def test_fleet_writes_overlapping_runs_in_one_batch():
     # Concurrency is the point: these two events overlap deliberately.
     c = FakeClient()

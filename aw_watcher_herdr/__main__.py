@@ -439,7 +439,8 @@ def main(argv: list[str] | None = None) -> int:
         attention_writer = AttentionWriter(client, attention_bucket,
                                            config.pulsetime,
                                            config.generic_terminal_label)
-        fleet_writer = FleetWriter(client, fleet_bucket)
+        fleet_writer = FleetWriter(client, fleet_bucket,
+                                   config.generic_terminal_label)
 
         # SIGTERM (launchd or aw-qt stop) must close open runs, or their
         # intervals are lost.

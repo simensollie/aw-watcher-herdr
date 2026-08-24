@@ -73,10 +73,12 @@ class FleetWriter:
     """Posts completed, overlapping agent-run intervals."""
 
     def __init__(self, client, bucket_id: str,
+                 generic_terminal_label: str = "terminal",
                  max_pending: int = DEFAULT_MAX_PENDING,
                  warn_after: int = WARN_AFTER_CONSECUTIVE_FAILURES):
         self._client = client
         self._bucket = bucket_id
+        self._generic = generic_terminal_label
         self._max_pending = max_pending
         self._warn_after = warn_after
         self._pending: list[Event] = []
@@ -96,8 +98,11 @@ class FleetWriter:
                 duration=run.end - run.start,
                 data={
                     "app": run.key.workspace_label,
+                    # Same generic fallback as AttentionWriter, so an empty
+                    # terminal name still composes identically in both buckets.
                     "title": display_title(run.key.workspace_label,
-                                           run.tab_label, run.title),
+                                           run.tab_label,
+                                           run.title or self._generic),
                     "tab": run.tab_label,
                     "tab_id": run.key.tab_id,
                     "status": run.key.status,
