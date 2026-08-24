@@ -284,7 +284,9 @@ ActivityWatch renders `app` and `title` only. Any other field is queryable but
 invisible in the timeline and in the "Top window titles" summary, so a tab label
 recorded solely as its own key would never be seen. `title` is therefore
 composed as `space · tab · terminal name` by one shared pure function, applied
-to both buckets so a task reads identically in each.
+to both buckets so a task reads identically in each. An empty terminal name is
+substituted with `generic_terminal_label` before composition in both writers,
+so the identical-composition rule holds for plain shells as well as agent tasks.
 
 - The separator is U+00B7 MIDDLE DOT, not a hyphen: workspace and tab labels
   routinely contain hyphens (`aw-watcher-herdr`), and a hyphenated composition
