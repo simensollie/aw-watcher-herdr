@@ -79,8 +79,9 @@ sed -e '/<!--/,/-->/d' -e "s#/Users/CHANGE_ME#$HOME#g" "$PLIST_TEMPLATE" > "$PLI
 plutil -lint "$PLIST"
 
 echo "==> Loading the LaunchAgent"
-launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" "$PLIST"
+# Delegated so the unload race is retried and the result verified; a bare
+# bootout-then-bootstrap pair silently left the agent unloaded.
+"$REPO_ROOT/scripts/reload-agent.sh" "$LABEL" "$PLIST"
 
 cat <<EOF
 
