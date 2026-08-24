@@ -252,11 +252,19 @@ spec, which is visible in review.
 | Field | Type | Source | Example |
 |---|---|---|---|
 | `app` | string | `label` of `focused_workspace_id` | `beta client-one` |
-| `title` | string | focused pane's `terminal_title_stripped`, else the generic label | `Sync cards with tickets` |
+| `title` | string | `app`, tab label and terminal name composed (§5.2) | `beta client-one · cards · Sync cards with tickets` |
+| `tab` | string | `label` of the focused pane's tab | `cards` |
 | `agent` | string \| null | focused pane's `agent` | `claude` |
 | `agent_status` | string | focused pane's `agent_status` | `idle` |
 | `workspace_id` | string | opaque id, diagnostic | `w5` |
+| `tab_id` | string \| null | opaque id, diagnostic | `w5:t1` |
 | `pane_id` | string | opaque id, diagnostic | `w5:p1` |
+
+The tab comes from the focused **pane's** `tab_id`, falling back to
+`focused_tab_id` when no pane is focused: the pane is the authority on which tab
+it lives in, and a snapshot caught mid-move can disagree. A tab absent from the
+`tabs` list yields an empty label rather than suppressing the whole Attention,
+for the same reason an unlabeled workspace does.
 
 Using `app`/`title` rather than custom keys is deliberate and carried over from
 the cmux watcher: ActivityWatch heartbeat-merges consecutive identical events on
@@ -269,6 +277,34 @@ removes the regex guessing entirely. It answers the second only partially, so a
 much smaller replacement is needed (§5.1). Panes with no agent use the configured
 `generic_terminal_label` (default `terminal`) so plain-shell time merges into
 long blocks instead of fragmenting.
+
+### 5.2 Composed display title (amended 2026-08-24)
+
+ActivityWatch renders `app` and `title` only. Any other field is queryable but
+invisible in the timeline and in the "Top window titles" summary, so a tab label
+recorded solely as its own key would never be seen. `title` is therefore
+composed as `space · tab · terminal name` by one shared pure function, applied
+to both buckets so a task reads identically in each. An empty terminal name is
+substituted with `generic_terminal_label` before composition in both writers,
+so the identical-composition rule holds for plain shells as well as agent tasks.
+
+- The separator is U+00B7 MIDDLE DOT, not a hyphen: workspace and tab labels
+  routinely contain hyphens (`aw-watcher-herdr`), and a hyphenated composition
+  could not be split back into its parts.
+- The space is repeated even though `app` carries it, because the titles-only
+  summary shows no `app`, and tab labels are not unique across spaces (two
+  spaces can both hold a tab called `Status`).
+- Empty segments are dropped rather than rendered as a bare separator, which
+  would read as a missing value instead of an absent one. A **default ordinal**
+  label (`1`) is not empty and is kept: dropping it would give two tabs of one
+  space the same title and silently merge unrelated work.
+- `tab` and `tab_id` are recorded as their own fields as well, so a query can
+  group by tab without parsing the composed string apart.
+
+**Breaking change.** The `title` format differs from every event written before
+this amendment, so events either side of the change do not heartbeat-merge and
+any categorization rule matching the old titles needs updating. Historical data
+is left as written, not migrated.
 
 ### 5.1 Leading glyph strip
 
@@ -311,16 +347,25 @@ correctly — 1320 s of agent-time inside a 420 s wall-clock window.
 | Field | Type | Source | Example |
 |---|---|---|---|
 | `app` | string | workspace label | `beta client-one` |
-| `title` | string | last `terminal_title_stripped` seen in the run, glyph-stripped per §5.1 | `Compare spec with requirements` |
+| `title` | string | `app`, last tab label and last `terminal_title_stripped` seen in the run, glyph-stripped per §5.1 and composed per §5.2 | `beta client-one · specs · Compare spec with requirements` |
+| `tab` | string | last tab label seen in the run | `specs` |
 | `status` | string | `working` \| `blocked` \| `done` | `working` |
 | `agent` | string | agent kind | `claude` |
 | `cwd` | string | agent `cwd` | `/Users/me/proj` |
+| `tab_id` | string | opaque id | `w6:t1` |
 | `pane_id` | string | opaque id | `w6:p1` |
 
 ### 6.1 Run lifecycle
 
 A **run** is one continuous interval of one pane holding one status. Runs are
 keyed by `pane_id`.
+
+`tab_id` is part of the run key and the tab **label** is not: moving a pane to
+another tab is a change of context and must close the interval, exactly as
+moving it to another workspace does, while renaming a tab is presentation only
+and must not split it. The label follows the same rule as the terminal title —
+the most recent non-empty value wins, so a rename relabels the interval it
+happened in.
 
 - **Open** when a pane's `agent_status` enters `working`, `blocked` or `done`.
 - **Close** on status change or pane close, writing the event with its computed

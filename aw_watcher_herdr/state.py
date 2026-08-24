@@ -18,6 +18,8 @@ class Attention:
 
     workspace_label: str
     workspace_id: str
+    tab_id: str | None
+    tab_label: str
     pane_id: str | None
     title: str | None
     agent: str | None
@@ -61,6 +63,31 @@ def clean_title(title: str | None) -> str | None:
     return title[index:].strip() or None
 
 
+# U+00B7 MIDDLE DOT, not a hyphen: workspace and tab labels routinely contain
+# hyphens (this project's own space is `aw-watcher-herdr`), so a hyphenated
+# composition could not be split back into its parts by eye or by query.
+TITLE_SEPARATOR = " \u00b7 "
+
+
+def display_title(app: str | None, tab: str | None,
+                  title: str | None) -> str:
+    """Compose `space \u00b7 tab \u00b7 terminal name` for the ActivityWatch UI.
+
+    ActivityWatch renders only `app` and `title`, so anything not folded into
+    one of them is invisible outside a hand-written query. The space is
+    repeated here even though `app` already carries it, which keeps a title
+    self-describing in the views that show titles alone.
+
+    Empty segments are dropped rather than rendered as a bare separator: an
+    unlabeled tab is an absent value, and `space \u00b7  \u00b7 title` would read as a
+    missing one. A DEFAULT ordinal label ("1") is not empty and is kept, since
+    dropping it would give two tabs of one space the same title and merge
+    unrelated work into a single block.
+    """
+    parts = [(part or "").strip() for part in (app, tab, title)]
+    return TITLE_SEPARATOR.join(part for part in parts if part)
+
+
 def _index(items, key: str) -> dict:
     return {i[key]: i for i in (items or []) if isinstance(i, dict) and key in i}
 
@@ -71,6 +98,19 @@ def workspace_labels(snapshot: dict) -> dict[str, str]:
         w["workspace_id"]: w.get("label") or ""
         for w in (snapshot.get("workspaces") or [])
         if isinstance(w, dict) and "workspace_id" in w
+    }
+
+
+def tab_labels(snapshot: dict) -> dict[str, str]:
+    """tab_id -> label, for both attention and fleet lookups.
+
+    A default label is the tab's ordinal ("1"), which is kept as-is: see
+    display_title for why an ordinal is not treated as absent.
+    """
+    return {
+        t["tab_id"]: t.get("label") or ""
+        for t in (snapshot.get("tabs") or [])
+        if isinstance(t, dict) and "tab_id" in t
     }
 
 
@@ -100,9 +140,17 @@ def extract_attention(snapshot: dict) -> Attention | None:
     pane = _index(snapshot.get("panes"), "pane_id").get(pane_id) if pane_id else None
     pane = pane or {}
 
+    # The pane is the authority on which tab it lives in; `focused_tab_id` is
+    # the fallback for a snapshot with no focused pane. A tab missing from the
+    # list yields an empty label rather than None-ing the whole Attention, for
+    # the same reason an unlabeled workspace does.
+    tab_id = pane.get("tab_id") or snapshot.get("focused_tab_id")
+
     return Attention(
         workspace_label=label,
         workspace_id=ws_id,
+        tab_id=tab_id,
+        tab_label=tab_labels(snapshot).get(tab_id, "") if tab_id else "",
         pane_id=pane_id,
         title=clean_title(pane.get("terminal_title_stripped")),
         agent=pane.get("agent"),
@@ -119,9 +167,12 @@ DEFAULT_FLEET_STATUSES = ("working", "blocked", "done")
 class RunKey:
     """Identity of a run. A change to ANY field closes the run and opens a new
     one. The title is deliberately absent: agents rewrite the terminal title as
-    they work, and segmenting on it would shred every run (spec §6.1)."""
+    they work, and segmenting on it would shred every run (spec §6.1). The tab
+    LABEL is absent for the same reason, while the tab ID is present: moving a
+    pane to another tab is a change of context, renaming its tab is not."""
 
     pane_id: str
+    tab_id: str
     workspace_label: str
     status: str
     agent: str
@@ -134,6 +185,7 @@ class CompletedRun:
 
     key: RunKey
     title: str
+    tab_label: str
     start: datetime
     end: datetime
 
@@ -154,17 +206,18 @@ class FleetTracker:
                  max_run_seconds: float = 43200.0):
         self._statuses = tuple(statuses)
         self._max_run_seconds = float(max_run_seconds)
-        # pane_id -> (key, latest_title, started_at)
-        self._open: dict[str, tuple[RunKey, str, datetime]] = {}
+        # pane_id -> (key, latest_title, latest_tab_label, started_at)
+        self._open: dict[str, tuple[RunKey, str, str, datetime]] = {}
 
     @property
     def open_count(self) -> int:
         return len(self._open)
 
-    def _desired(self, snapshot: dict) -> dict[str, tuple[RunKey, str]]:
-        """pane_id -> (key, title) for every agent that should have an open run."""
+    def _desired(self, snapshot: dict) -> dict[str, tuple[RunKey, str, str]]:
+        """pane_id -> (key, title, tab_label) for every agent that should be open."""
         labels = workspace_labels(snapshot)
-        desired: dict[str, tuple[RunKey, str]] = {}
+        tabs = tab_labels(snapshot)
+        desired: dict[str, tuple[RunKey, str, str]] = {}
         for agent in (snapshot.get("agents") or []):
             if not isinstance(agent, dict):
                 continue
@@ -172,8 +225,10 @@ class FleetTracker:
             status = agent.get("agent_status")
             if not pane_id or status not in self._statuses:
                 continue
+            tab_id = agent.get("tab_id") or ""
             key = RunKey(
                 pane_id=pane_id,
+                tab_id=tab_id,
                 workspace_label=labels.get(agent.get("workspace_id"), ""),
                 status=status,
                 agent=agent.get("agent") or "",
@@ -182,7 +237,8 @@ class FleetTracker:
             # Same cleaning as the attention bucket (spec §5.1), so one task
             # reads identically in both.
             desired[pane_id] = (
-                key, clean_title(agent.get("terminal_title_stripped")) or "")
+                key, clean_title(agent.get("terminal_title_stripped")) or "",
+                tabs.get(tab_id, ""))
         return desired
 
     def update(self, snapshot: dict, now: datetime) -> list[CompletedRun]:
@@ -190,27 +246,30 @@ class FleetTracker:
         desired = self._desired(snapshot)
         closed: list[CompletedRun] = []
 
-        for pane_id, (key, title, start) in list(self._open.items()):
+        for pane_id, (key, title, tab_label, start) in list(self._open.items()):
             incoming = desired.get(pane_id)
             expired = (now - start).total_seconds() >= self._max_run_seconds
             if incoming is None or incoming[0] != key or expired:
-                closed.append(CompletedRun(key, title, start, now))
+                closed.append(CompletedRun(key, title, tab_label, start, now))
                 del self._open[pane_id]
             else:
-                # Same run continues; keep the most recent non-empty title.
-                self._open[pane_id] = (key, incoming[1] or title, start)
+                # Same run continues; keep the most recent non-empty title and
+                # tab label, so a rename relabels the interval it happened in
+                # rather than splitting it.
+                self._open[pane_id] = (
+                    key, incoming[1] or title, incoming[2] or tab_label, start)
 
         # Anything still desired but not open starts now. This also reopens the
         # runs just closed by a key change or the cap, so tracking continues.
-        for pane_id, (key, title) in desired.items():
+        for pane_id, (key, title, tab_label) in desired.items():
             if pane_id not in self._open:
-                self._open[pane_id] = (key, title, now)
+                self._open[pane_id] = (key, title, tab_label, now)
 
         return closed
 
     def close_all(self, at: datetime) -> list[CompletedRun]:
         """Close every open run at `at`. Used on shutdown and on a sleep gap."""
-        closed = [CompletedRun(key, title, start, at)
-                  for (key, title, start) in self._open.values()]
+        closed = [CompletedRun(key, title, tab_label, start, at)
+                  for (key, title, tab_label, start) in self._open.values()]
         self._open.clear()
         return closed

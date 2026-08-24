@@ -29,21 +29,29 @@ class FakeClient:
         self.inserted.append((bucket_id, list(events)))
 
 
-def run(status="working", label="beta app", start=T0, seconds=60, title="task"):
-    key = RunKey("w2:p1", label, status, "claude", "/home/dev/beta-app")
-    return CompletedRun(key, title, start, start + timedelta(seconds=seconds))
+def run(status="working", label="beta app", start=T0, seconds=60, title="task",
+        tab_label="import"):
+    key = RunKey("w2:p1", "w2:t1", label, status, "claude", "/home/dev/beta-app")
+    return CompletedRun(key, title, tab_label, start,
+                        start + timedelta(seconds=seconds))
 
 
 # --- attention --------------------------------------------------------------
 
-def test_attention_heartbeats_with_app_and_title():
+def test_attention_heartbeats_with_app_and_composed_title():
+    # ActivityWatch renders app and title only, so the tab has to be folded
+    # into the title to be visible at all; it is kept as its own field too so
+    # a query can group by tab without parsing the string back apart.
     c = FakeClient()
     AttentionWriter(c, "bucket", pulsetime=5.0).write(
-        Attention("gamma docs", "w3", "w3:p1", "Rewrite the guide", "claude", "idle"), T0)
+        Attention("gamma docs", "w3", "w3:t1", "guide", "w3:p1",
+                  "Rewrite the guide", "claude", "idle"), T0)
     bucket, event, pulsetime, queued = c.heartbeats[0]
     assert bucket == "bucket" and pulsetime == 5.0 and queued is True
     assert event.data["app"] == "gamma docs"
-    assert event.data["title"] == "Rewrite the guide"
+    assert event.data["title"] == "gamma docs \u00b7 guide \u00b7 Rewrite the guide"
+    assert event.data["tab"] == "guide"
+    assert event.data["tab_id"] == "w3:t1"
     assert event.data["agent"] == "claude"
     assert event.data["agent_status"] == "idle"
     assert event.data["workspace_id"] == "w3"
@@ -52,11 +60,22 @@ def test_attention_heartbeats_with_app_and_title():
 
 
 def test_attention_uses_the_generic_label_when_there_is_no_title():
+    # A plain shell still gets its space and tab, so shell time groups per tab
+    # instead of collapsing every project's shells into one "terminal" block.
     c = FakeClient()
     AttentionWriter(c, "bucket", pulsetime=5.0,
                     generic_terminal_label="terminal").write(
-        Attention("alpha-service", "w1", "w1:p1", None, None, "unknown"), T0)
-    assert c.heartbeats[0][1].data["title"] == "terminal"
+        Attention("alpha-service", "w1", "w1:t1", "1", "w1:p1", None, None,
+                  "unknown"), T0)
+    assert c.heartbeats[0][1].data["title"] == "alpha-service \u00b7 1 \u00b7 terminal"
+
+
+def test_attention_title_omits_an_unlabeled_tab():
+    c = FakeClient()
+    AttentionWriter(c, "bucket", pulsetime=5.0).write(
+        Attention("gamma docs", "w3", "w3:t1", "", "w3:p1", "Rewrite the guide",
+                  "claude", "idle"), T0)
+    assert c.heartbeats[0][1].data["title"] == "gamma docs \u00b7 Rewrite the guide"
 
 
 # --- fleet ------------------------------------------------------------------
@@ -69,9 +88,39 @@ def test_fleet_inserts_events_with_explicit_durations():
     assert events[0].timestamp == T0
     assert events[0].duration == timedelta(seconds=90)
     assert events[0].data == {
-        "app": "beta app", "title": "task", "status": "working",
+        "app": "beta app", "title": "beta app \u00b7 import \u00b7 task",
+        "tab": "import", "tab_id": "w2:t1", "status": "working",
         "agent": "claude", "cwd": "/home/dev/beta-app", "pane_id": "w2:p1",
     }
+
+
+def test_fleet_and_attention_compose_a_title_identically():
+    # One task must read the same in both buckets, the same reason clean_title
+    # is shared (spec §5.1).
+    c = FakeClient()
+    AttentionWriter(c, "attention", pulsetime=5.0).write(
+        Attention("beta app", "w2", "w2:t1", "import", "w2:p1", "task",
+                  "claude", "working"), T0)
+    FleetWriter(c, "fleet").write([run()])
+    assert (c.heartbeats[0][1].data["title"]
+            == c.inserted[0][1][0].data["title"])
+
+
+def test_fleet_and_attention_use_the_same_generic_label_when_title_is_empty():
+    # The identical-composition rule must hold for an empty terminal name too:
+    # attention already folds in generic_terminal_label, and fleet must as well,
+    # or the two buckets diverge on the same pane.
+    c = FakeClient()
+    AttentionWriter(c, "attention", pulsetime=5.0,
+                    generic_terminal_label="terminal").write(
+        Attention("beta app", "w2", "w2:t1", "import", "w2:p1", None,
+                  "claude", "working"), T0)
+    FleetWriter(c, "fleet", generic_terminal_label="terminal").write(
+        [run(title="")])
+    assert c.heartbeats[0][1].data["title"] == (
+        "beta app \u00b7 import \u00b7 terminal")
+    assert (c.heartbeats[0][1].data["title"]
+            == c.inserted[0][1][0].data["title"])
 
 
 def test_fleet_writes_overlapping_runs_in_one_batch():

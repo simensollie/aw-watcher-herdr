@@ -20,7 +20,7 @@ from datetime import datetime
 
 from aw_core.models import Event
 
-from .state import Attention, CompletedRun
+from .state import Attention, CompletedRun, display_title
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,11 @@ class AttentionWriter:
             # app/title rather than custom keys: aw merges heartbeats on these
             # and its categorization rules match them (spec §5).
             "app": attention.workspace_label,
-            "title": attention.title or self._generic,
+            "title": display_title(attention.workspace_label,
+                                   attention.tab_label,
+                                   attention.title or self._generic),
+            "tab": attention.tab_label,
+            "tab_id": attention.tab_id,
             "agent": attention.agent,
             "agent_status": attention.agent_status,
             "workspace_id": attention.workspace_id,
@@ -69,10 +73,12 @@ class FleetWriter:
     """Posts completed, overlapping agent-run intervals."""
 
     def __init__(self, client, bucket_id: str,
+                 generic_terminal_label: str = "terminal",
                  max_pending: int = DEFAULT_MAX_PENDING,
                  warn_after: int = WARN_AFTER_CONSECUTIVE_FAILURES):
         self._client = client
         self._bucket = bucket_id
+        self._generic = generic_terminal_label
         self._max_pending = max_pending
         self._warn_after = warn_after
         self._pending: list[Event] = []
@@ -92,7 +98,13 @@ class FleetWriter:
                 duration=run.end - run.start,
                 data={
                     "app": run.key.workspace_label,
-                    "title": run.title or "",
+                    # Same generic fallback as AttentionWriter, so an empty
+                    # terminal name still composes identically in both buckets.
+                    "title": display_title(run.key.workspace_label,
+                                           run.tab_label,
+                                           run.title or self._generic),
+                    "tab": run.tab_label,
+                    "tab_id": run.key.tab_id,
                     "status": run.key.status,
                     "agent": run.key.agent,
                     "cwd": run.key.cwd,
