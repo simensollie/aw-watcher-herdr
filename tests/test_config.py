@@ -27,8 +27,10 @@ def test_defaults_when_no_flags(monkeypatch):
 def test_window_apps_default_is_platform_specific(monkeypatch):
     monkeypatch.setattr(cli.sys, "platform", "darwin")
     assert cli.default_window_apps() == ["Ghostty", "Herdr"]
+    # Linux: the app's name is known (herdr-app) but the TUI's terminal is
+    # not, so a filter of only the app would drop every TUI interval.
     monkeypatch.setattr(cli.sys, "platform", "linux")
-    assert cli.default_window_apps() == ["herdr-app"]
+    assert cli.default_window_apps() == []
     monkeypatch.setattr(cli.sys, "platform", "win32")
     assert cli.default_window_apps() == []
 
@@ -43,7 +45,7 @@ def test_window_app_absent_from_the_file_keeps_the_platform_default(monkeypatch)
     monkeypatch.setattr(cli, "load_config_toml", lambda *a, **k: {
         "aw-watcher-herdr": {"poll_interval": 2.0}
     })
-    assert cli.load_config(cli.parse_args([])).window_app == ["herdr-app"]
+    assert cli.load_config(cli.parse_args([])).window_app == []
 
 
 def test_file_values_applied(monkeypatch):

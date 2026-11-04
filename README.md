@@ -288,8 +288,11 @@ RETURN   = merge_events_by_keys(events, ["app", "title"]);
 
 `"Ghostty"` is what macOS calls the terminal the TUI runs in. The native app
 is its own window: `herdr-app` on Linux (the app_id), `Herdr` on macOS (from
-`Herdr.app`; not yet verified against aw-watcher-window). Linux reports the
-WM_CLASS and Windows the executable name, so find yours with:
+`Herdr.app`; not yet verified against aw-watcher-window). On Linux and
+Windows the default is empty (no window filter) because the TUI's terminal
+name is not known there; set `window_app = ["herdr-app", "<your terminal>"]`
+to narrow it. Linux reports the WM_CLASS and Windows the executable name, so
+find yours with:
 
 ```bash
 aw-watcher-herdr --detect-terminal
@@ -346,7 +349,7 @@ override the file.
 | `fleet_statuses` | `["working", "blocked", "done", "error"]` | Statuses that open a run; a bare string is accepted as a one-element list |
 | `max_run_seconds` | `43200` | Hard cap on a single run; must be greater than 0 |
 | `gap_factor` | `3.0` | Multiple of `poll_interval` treated as a sleep gap; must be greater than 1 |
-| `window_app` | `["Ghostty", "Herdr"]` on macOS, `["herdr-app"]` on Linux, `[]` on Windows | Window names for `--print-query` |
+| `window_app` | `["Ghostty", "Herdr"]` on macOS, `[]` elsewhere (no filter) | Window names for `--print-query` |
 | `window_title` | unset | Optional title regex for `--print-query` |
 
 Flags: `--testing`, `--verbose`, `--source`, `--socket-path`,

@@ -146,6 +146,16 @@ def test_a_remote_machines_pane_keeps_its_prefixed_ids(snap):
     assert remote["cwd"] == "/srv/gamma-docs"
 
 
+def test_a_sub_agent_whose_parent_pane_the_core_omits_is_still_placed(parts):
+    # t4's parent t2 is a pane the app lists; drop t2 from the core's answer
+    # (as `{"all": false}` may) and t4 must still land in the import tab.
+    status, listing, terminals = parts
+    snap = adapt_snapshot(status, listing, [t for t in terminals
+                                            if t["address"] != "t2"])
+    assert agent(snap, "t4")["tab_id"] == "tb-beta-import"
+    assert agent(snap, "t5")["tab_id"] == "tb-beta-import"
+
+
 def test_a_pane_without_a_core_entry_still_records_the_apps_view(parts):
     status, listing, terminals = parts
     snap = adapt_snapshot(status, listing, [t for t in terminals
@@ -290,11 +300,41 @@ def test_a_missing_app_socket_is_unavailable(tmp_path):
         source.snapshot()
 
 
-def test_a_missing_core_socket_is_unavailable(parts, tmp_path):
+def test_a_missing_core_socket_while_the_app_answers_is_a_fault(parts, tmp_path):
+    # The app runs herdr-core itself, so "app up, core unreachable" is a
+    # misconfigured core_socket_path, not "herdr is closed". It must NOT be
+    # HerdrUnavailable, or AutoSource would quietly read the idle TUI while
+    # the person works in the app.
     status, listing, _ = parts
     with fake_line_server("app.sock", [status, listing]) as (app_path, _):
-        with pytest.raises(HerdrUnavailable):
+        with pytest.raises(HerdrError, match="core_socket_path") as info:
             AppSource(app_path, str(tmp_path / "core.sock")).snapshot()
+    assert not isinstance(info.value, HerdrUnavailable)
+
+
+def test_a_core_error_with_string_data_is_still_a_herdr_error(parts):
+    status, listing, _ = parts
+    with fake_line_server("app.sock", [status, listing]) as (app_path, _), \
+            fake_line_server("core.sock", [
+                {"jsonrpc": "2.0", "id": "x",
+                 "error": {"code": -1, "message": "boom", "data": "text"}},
+            ]) as (core_path, _):
+        with pytest.raises(HerdrError, match="boom"):
+            AppSource(app_path, core_path).snapshot()
+
+
+def test_an_unexpected_field_shape_is_a_herdr_error_not_a_crash(parts):
+    # main.run catches HerdrError only; a bare AttributeError would kill the
+    # daemon on the first poll after a protocol change.
+    status, listing, terminals = parts
+    broken = [dict(t, labels=["herdr.tab"]) if t["address"] == "t6" else t
+              for t in terminals]
+    with fake_line_server("app.sock", [status, listing]) as (app_path, _), \
+            fake_line_server("core.sock", [
+                {"jsonrpc": "2.0", "id": "x", "result": {"terminals": broken}},
+            ]) as (core_path, _):
+        with pytest.raises(HerdrError, match="unexpected snapshot shape"):
+            AppSource(app_path, core_path).snapshot()
 
 
 def test_an_app_error_line_is_a_herdr_error():

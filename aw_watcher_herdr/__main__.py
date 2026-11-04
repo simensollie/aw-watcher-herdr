@@ -86,10 +86,12 @@ def default_window_apps() -> list[str]:
     and per user: on macOS `Ghostty` is the documented default, elsewhere
     --detect-terminal reads the real value from the user's own data (spec
     §7.1). The native app is its own window, so it has a stable name: the
-    WM_CLASS / app_id `herdr-app` on Linux (verified on Hyprland), and the
     bundle name `Herdr` on macOS (from Herdr.app; not yet verified against
-    aw-watcher-window). Windows gets no default. An empty list drops the
-    filter rather than matching nothing.
+    aw-watcher-window), which joins the macOS default. On Linux the app is
+    `herdr-app` (the app_id, verified on Hyprland) but the TUI's terminal is
+    unknown, so a default of only the app would drop every TUI interval from
+    the query: Linux and Windows keep the empty list, which drops the filter
+    rather than matching nothing.
 
     This is one of the three code sites spec §4.3 permits to read
     sys.platform (the others are herdr.py and lock.py). Spec §7.1 defines
@@ -99,8 +101,6 @@ def default_window_apps() -> list[str]:
     """
     if sys.platform == "darwin":
         return ["Ghostty", "Herdr"]
-    if sys.platform.startswith("linux"):
-        return ["herdr-app"]
     return []
 
 

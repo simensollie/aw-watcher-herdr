@@ -50,9 +50,8 @@ from __future__ import annotations
 
 import json
 import os
-import socket
 
-from .herdr import HerdrError, HerdrUnavailable
+from .herdr import HerdrError, HerdrUnavailable, request_line
 
 DEFAULT_CORE_SESSION = "default"
 TERMINAL_LIST_METHOD = "terminal.list"
@@ -101,47 +100,7 @@ def default_core_socket_path() -> str:
     return os.path.join(state, "herdr-core", session, f"{session}.sock")
 
 
-# --- line protocol ----------------------------------------------------------
-
-def _request_line(path: str, payload: dict, timeout: float, what: str) -> dict:
-    """One JSON line out, one JSON line back, on a fresh connection.
-
-    Both herdr-app and herdr-core answer a plain-line request this way, and a
-    fresh connection per request makes reconnect-after-failure the normal path
-    (the same reasoning as UnixSocketSource). A connection failure is
-    HerdrUnavailable: the program is simply not running, which is a gap, not a
-    fault.
-    """
-    if not hasattr(socket, "AF_UNIX"):
-        raise HerdrUnavailable(
-            f"{what}: this platform has no Unix sockets (herdr-core uses a "
-            f"named pipe on Windows, which CPython cannot open)")
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.settimeout(timeout)
-    try:
-        sock.connect(path)
-    except OSError as exc:
-        sock.close()
-        raise HerdrUnavailable(f"{what}: cannot connect to {path}: {exc}") from exc
-    try:
-        with sock.makefile("rwb") as f:
-            f.write(json.dumps(payload).encode() + b"\n")
-            f.flush()
-            line = f.readline()
-    except OSError as exc:
-        raise HerdrError(f"{what}: socket error: {exc}") from exc
-    finally:
-        sock.close()
-    if not line:
-        raise HerdrError(f"{what}: connection closed without a response")
-    try:
-        msg = json.loads(line.decode("utf-8", "replace"))
-    except ValueError as exc:
-        raise HerdrError(f"{what}: malformed response: {exc}") from exc
-    if not isinstance(msg, dict):
-        raise HerdrError(f"{what}: response was not an object")
-    return msg
-
+# --- transport -------------------------------------------------------------
 
 class AppSource:
     """Reads herdr-app (focus, panes) and herdr-core (terminals) and adapts
@@ -159,7 +118,7 @@ class AppSource:
     def app_request(self, kind: str) -> dict:
         """`{"status": true}` or `{"ls": true}` against the app window."""
         what = f"herdr-app {kind}"
-        msg = _request_line(self.app_socket_path, {kind: True}, self.timeout, what)
+        msg = request_line(self.app_socket_path, {kind: True}, self.timeout, what)
         if "error" in msg:
             raise HerdrError(f"{what}: {msg['error']}")
         return msg
@@ -168,7 +127,7 @@ class AppSource:
         """One JSON-RPC 2.0 call against herdr-core; returns its `result`."""
         self._seq += 1
         what = f"herdr-core {method}"
-        msg = _request_line(self.core_socket_path, {
+        msg = request_line(self.core_socket_path, {
             "jsonrpc": "2.0",
             "id": f"aw-watcher-herdr:{self._seq}",
             "method": method,
@@ -176,8 +135,13 @@ class AppSource:
         }, self.timeout, what)
         if "error" in msg:
             err = msg["error"] or {}
-            kind = (err.get("data") or {}).get("kind") if isinstance(err, dict) else None
-            message = err.get("message", "") if isinstance(err, dict) else str(err)
+            kind = message = None
+            if isinstance(err, dict):
+                data = err.get("data")
+                kind = data.get("kind") if isinstance(data, dict) else None
+                message = err.get("message", "")
+            else:
+                message = str(err)
             raise HerdrError(f"{what}: {kind or 'error'}: {message}")
         if "result" not in msg:
             raise HerdrError(f"{what}: response contained no result")
@@ -186,13 +150,31 @@ class AppSource:
     def snapshot(self) -> dict:
         status = self.app_request("status")
         listing = self.app_request("ls")
-        result = self.core_request(TERMINAL_LIST_METHOD, {"all": False})
+        try:
+            result = self.core_request(TERMINAL_LIST_METHOD, {"all": False})
+        except HerdrUnavailable as exc:
+            # The app window answered, so its runtime must be there too: the
+            # app starts herdr-core itself. Not connecting is therefore a
+            # fault (most likely a custom `socket` in herdr-core's config.toml
+            # that core_socket_path must mirror), never a reason for AutoSource
+            # to read the idle TUI instead while the person works in the app.
+            raise HerdrError(
+                f"{exc}; herdr-app is running, so set core_socket_path to "
+                f"where its herdr-core listens") from exc
         terminals = result.get("terminals") if isinstance(result, dict) else None
         if not isinstance(terminals, list):
             raise HerdrError(
                 f"herdr-core {TERMINAL_LIST_METHOD}: result has no terminals "
                 f"list; the core's API may have changed")
-        return adapt_snapshot(status, listing, terminals)
+        try:
+            return adapt_snapshot(status, listing, terminals)
+        except (AttributeError, TypeError, KeyError) as exc:
+            # A field of an unexpected shape (a list where a dict is due, say)
+            # is a protocol change, which main.run counts and reports as a
+            # HerdrError; left as a bare exception it would kill the daemon.
+            raise HerdrError(
+                f"herdr-app/herdr-core: unexpected snapshot shape: "
+                f"{type(exc).__name__}: {exc}") from exc
 
 
 # --- adaptation (pure) ------------------------------------------------------
@@ -358,11 +340,15 @@ def _place_orphan(address: str, by_address: dict,
         return tab_to_workspace[tab_id], tab_id
     seen = set()
     current = core.get("parent")
-    while current and current not in seen and current in by_address:
+    while current and current not in seen:
+        # A placed pane settles it even when the core did not list that
+        # terminal (the app's view of a pane is kept without a core entry).
         if current in tab_of_terminal:
             return tab_of_terminal[current]
+        parent = by_address.get(current)
+        if parent is None:
+            return None
         seen.add(current)
-        parent = by_address[current]
         parent_tab = (parent.get("labels") or {}).get(TAB_LABEL)
         if parent_tab in tab_to_workspace:
             return tab_to_workspace[parent_tab], parent_tab

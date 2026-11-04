@@ -43,7 +43,8 @@ gap_factor = 3.0               # gap > gap_factor x poll_interval => machine sle
 # The window herdr is in, as your window watcher names it: the native app's
 # own window (`herdr-app` on Linux, `Herdr` on macOS) or the terminal you run
 # the TUI in, which differs per platform. Run `aw-watcher-herdr
-# --detect-terminal` to find yours. A list, because you may use both.
+# --detect-terminal` to find yours. A list, because you may use both. The
+# default is this on macOS and empty (no filter) elsewhere.
 window_app = ["Ghostty", "Herdr"]
 # Optional regex narrowing on the window title.
 # window_title = "herdr"
