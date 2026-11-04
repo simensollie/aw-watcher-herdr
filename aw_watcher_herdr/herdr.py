@@ -18,19 +18,28 @@ and no macOS Accessibility permission are needed.
 Two transports exist because herdr uses a Unix domain socket on macOS and Linux
 but a named pipe on Windows, where CPython exposes no socket.AF_UNIX. The CLI
 wrapper is the route herdr's own documentation recommends for plugins there.
-This module holds the only platform branch in the data path. Spec §4.3 permits
+This module holds the TUI's platform branch in the data path. Spec §4.3 permits
 two further sites: lock.py, and __main__.default_window_apps() as the third,
-which picks a display default rather than a transport.
+which picks a display default rather than a transport. app.py, the transport
+for the Herdr native app, is the same kind of site as this module.
+
+Since the native app (2026-10) there are two Herdr programs with no shared
+agents. `auto` therefore prefers the app whenever its window answers and
+falls back to the TUI otherwise (AutoSource), per poll: a running but idle
+TUI server must not be read while the person works in the app.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import socket
 import subprocess
 import sys
 from typing import Protocol
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_SOCKET_PATH = "~/.config/herdr/herdr.sock"
 DEFAULT_HERDR_BINARY = "herdr"
@@ -217,14 +226,60 @@ class CliSource:
         return _snapshot_from_result(_parse_envelope(stdout, SNAPSHOT_METHOD))
 
 
+class AutoSource:
+    """Prefer `primary` (the native app) and fall back to `fallback` (the TUI)
+    whenever the primary is unavailable, re-deciding on every poll.
+
+    Only HerdrUnavailable triggers the fallback: the app answering with
+    garbage is a fault to report, not a reason to quietly read the TUI
+    instead. The fallback's own HerdrUnavailable propagates, which the loop
+    records as an honest gap.
+    """
+
+    def __init__(self, primary: SnapshotSource, fallback: SnapshotSource):
+        self.primary = primary
+        self.fallback = fallback
+        self._using: str | None = None
+
+    def _note(self, using: str) -> None:
+        if using != self._using:
+            logger.info("reading herdr via %s", using)
+            self._using = using
+
+    def snapshot(self) -> dict:
+        try:
+            snap = self.primary.snapshot()
+        except HerdrUnavailable:
+            snap = self.fallback.snapshot()
+            self._note(type(self.fallback).__name__)
+            return snap
+        self._note(type(self.primary).__name__)
+        return snap
+
+
 def resolve_source(config) -> SnapshotSource:
-    """Build the snapshot source the config asks for (spec §4.3)."""
+    """Build the snapshot source the config asks for (spec §4.3).
+
+    `auto` on POSIX reads the native app when it is open and the TUI
+    otherwise. On Windows it stays the CLI: herdr-core uses a named pipe
+    there, which CPython cannot open, so the app source is not available.
+    """
+    from .app import AppSource  # local: app.py imports this module's errors
+
     choice = (getattr(config, "source", "auto") or "auto").lower()
+    app_paths = (getattr(config, "app_socket_path", None),
+                 getattr(config, "core_socket_path", None))
     if choice == "auto":
-        choice = "cli" if sys.platform.startswith("win") else "socket"
+        if sys.platform.startswith("win"):
+            choice = "cli"
+        else:
+            return AutoSource(AppSource(*app_paths),
+                              UnixSocketSource(getattr(config, "socket_path", None)))
+    if choice == "app":
+        return AppSource(*app_paths)
     if choice == "socket":
         return UnixSocketSource(getattr(config, "socket_path", None))
     if choice == "cli":
         return CliSource(getattr(config, "herdr_binary", DEFAULT_HERDR_BINARY))
     raise ValueError(
-        f"unknown source {choice!r}; expected one of auto, socket, cli")
+        f"unknown source {choice!r}; expected one of auto, app, socket, cli")

@@ -41,7 +41,7 @@ DEFAULT_GENERIC_LABEL = "terminal"
 # out or it would force one platform's value onto all of them.
 DEFAULT_CONFIG = f"""
 [{CLIENT_NAME}]
-source = "auto"                # auto | socket | cli (nothing else)
+source = "auto"                # auto | app | socket | cli (nothing else)
 herdr_binary = "{DEFAULT_HERDR_BINARY}"
 poll_interval = 2.0            # seconds between snapshots, must be > 0
 pulsetime = 5.0                # heartbeat merge window, must be > 0
@@ -53,16 +53,21 @@ gap_factor = 3.0               # sleep gap = gap_factor x poll_interval, must be
 # Terminal app names for the gating query. Run --detect-terminal to find yours.
 # window_app = ["Ghostty"]
 # window_title = "herdr"
-# socket_path = "~/.config/herdr/herdr.sock"   # defaults to that path
+# socket_path = "~/.config/herdr/herdr.sock"   # TUI socket; defaults to that path
+# Native app sockets. Defaults follow HERDR_APP_HOME, HC_SOCKET, HC_SESSION
+# and XDG_RUNTIME_DIR the way herdr-app and herdr-core do.
+# app_socket_path = "~/.config/herdr-app/herdr-app.sock"
+# core_socket_path = "/run/user/1000/herdr-core/default.sock"
 """.strip()
 
 _FILE_KEYS = (
-    "source", "socket_path", "herdr_binary", "poll_interval", "pulsetime",
+    "source", "socket_path", "app_socket_path", "core_socket_path",
+    "herdr_binary", "poll_interval", "pulsetime",
     "generic_terminal_label", "fleet_enabled", "fleet_statuses",
     "max_run_seconds", "gap_factor", "window_app", "window_title",
 )
 
-SOURCE_CHOICES = ("auto", "socket", "cli")
+SOURCE_CHOICES = ("auto", "app", "socket", "cli")
 
 
 class ConfigError(Exception):
@@ -75,12 +80,16 @@ class ConfigError(Exception):
 
 
 def default_window_apps() -> list[str]:
-    """Terminal app names aw-watcher-window is likely to report.
+    """App names aw-watcher-window is likely to report for Herdr.
 
-    Only macOS gets a default. On Linux the value is the WM_CLASS and on
-    Windows the executable name, neither of which is worth guessing when
-    --detect-terminal can read the real value from the user's own data
-    (spec §7.1). An empty list drops the filter rather than matching nothing.
+    The TUI runs inside a terminal emulator, whose name differs per platform
+    and per user: on macOS `Ghostty` is the documented default, elsewhere
+    --detect-terminal reads the real value from the user's own data (spec
+    §7.1). The native app is its own window, so it has a stable name: the
+    WM_CLASS / app_id `herdr-app` on Linux (verified on Hyprland), and the
+    bundle name `Herdr` on macOS (from Herdr.app; not yet verified against
+    aw-watcher-window). Windows gets no default. An empty list drops the
+    filter rather than matching nothing.
 
     This is one of the three code sites spec §4.3 permits to read
     sys.platform (the others are herdr.py and lock.py). Spec §7.1 defines
@@ -88,13 +97,19 @@ def default_window_apps() -> list[str]:
     touches no platform-specific API and holds no resource, so it carries
     none of the portability risk the rule exists to contain.
     """
-    return ["Ghostty"] if sys.platform == "darwin" else []
+    if sys.platform == "darwin":
+        return ["Ghostty", "Herdr"]
+    if sys.platform.startswith("linux"):
+        return ["herdr-app"]
+    return []
 
 
 @dataclass
 class Config:
     source: str = "auto"
     socket_path: str | None = None
+    app_socket_path: str | None = None
+    core_socket_path: str | None = None
     herdr_binary: str = DEFAULT_HERDR_BINARY
     poll_interval: float = 2.0
     pulsetime: float = 5.0
@@ -131,6 +146,10 @@ def load_config(args: argparse.Namespace) -> Config:
         cfg.source = args.source
     if args.socket_path is not None:
         cfg.socket_path = args.socket_path
+    if args.app_socket_path is not None:
+        cfg.app_socket_path = args.app_socket_path
+    if args.core_socket_path is not None:
+        cfg.core_socket_path = args.core_socket_path
     if args.herdr_binary is not None:
         cfg.herdr_binary = args.herdr_binary
     if args.poll_interval is not None:
@@ -181,9 +200,9 @@ def _validate(cfg: Config) -> None:
       * `window_app`, `window_title`: read by --print-query only, never in the
         data path, and empty already MEANS "do not gate on the window" (spec
         §7.1).
-      * `socket_path`, `herdr_binary`: an empty string is falsy and both call
-        sites fall back to the documented default, so it cannot silently point
-        at nothing.
+      * `socket_path`, `app_socket_path`, `core_socket_path`, `herdr_binary`:
+        an empty string is falsy and every call site falls back to the
+        documented default, so it cannot silently point at nothing.
       * `fleet_statuses`: an empty list is a plausible deliberate "track no
         status", and rejecting an unrecognised status would break the day herdr
         adds one. A bare string IS normalized (below), because tuple("done")
@@ -235,10 +254,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--verbose", action="store_true", help="debug logging")
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     p.add_argument("--source", choices=SOURCE_CHOICES,
-                   help="how to reach herdr (default auto: socket on POSIX, "
-                        "cli on Windows)")
+                   help="how to reach herdr (default auto: the native app when "
+                        "its window is open, else the TUI socket; cli on "
+                        "Windows)")
     p.add_argument("--socket-path", dest="socket_path",
-                   help="override the herdr socket path (socket source)")
+                   help="override the herdr TUI socket path (socket source)")
+    p.add_argument("--app-socket-path", dest="app_socket_path",
+                   help="override the herdr-app window socket path (app source)")
+    p.add_argument("--core-socket-path", dest="core_socket_path",
+                   help="override the herdr-core socket path (app source)")
     p.add_argument("--herdr-binary", dest="herdr_binary",
                    help="herdr executable to invoke (cli source)")
     p.add_argument("--poll-interval", dest="poll_interval", type=float,
