@@ -21,7 +21,8 @@ WARN_AFTER_CONSECUTIVE_ERRORS = 10
 
 _HINT_HERDR_ERROR = (
     "herdr is reachable but is not returning usable snapshots. Its API "
-    "protocol may have changed in an update. Check `herdr api snapshot` by hand "
+    "protocol may have changed in an update. Check it by hand (`herdr api "
+    "snapshot` for the TUI; `aw-watcher-herdr --snapshot` for the native app) "
     "and file an issue. (consecutive failures: %s; last error: %s)"
 )
 

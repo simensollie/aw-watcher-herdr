@@ -1,7 +1,8 @@
 # aw-watcher-herdr
 
 An [ActivityWatch](https://activitywatch.net/) watcher for
-[herdr](https://herdr.dev), the terminal workspace manager for AI coding agents.
+[Herdr](https://herdr.dev), the workspace manager for AI coding agents, in
+both its forms: the Herdr native app and the Herdr TUI.
 
 ## Why this exists
 
@@ -51,33 +52,70 @@ Accessibility permission** and runs from a detached background agent.
 
 ## Platform support
 
-| Platform | Transport | Install | Verified |
-|---|---|---|---|
-| macOS | Unix socket | launchd agent (or aw-qt on AW 0.14.x) | yes, end to end |
-| Linux | Unix socket | aw-qt module | no |
-| Windows | `herdr api snapshot` | aw-qt module | no |
+| Platform | Native app | TUI | Install | Verified |
+|---|---|---|---|---|
+| macOS | app + core sockets | Unix socket | launchd agent (or aw-qt on AW 0.14.x) | TUI, end to end |
+| Linux | app + core sockets | Unix socket | aw-qt module | app, live snapshots |
+| Windows | not yet (named pipes) | `herdr api snapshot` | aw-qt module | no |
 
-herdr is a multiplexer, so **any terminal emulator works**: the terminal's name
-appears only in a query recipe, never in the data path. On Windows herdr uses a
-named pipe, which CPython cannot open, so the watcher shells out to herdr's CLI
-wrapper instead; that is the route herdr's own documentation recommends.
+The TUI is a multiplexer, so **any terminal emulator works**: the terminal's
+name appears only in a query recipe, never in the data path. On Windows herdr
+uses named pipes, which CPython cannot open, so the watcher shells out to the
+TUI's CLI wrapper instead; the native app's core has no such wrapper for its
+terminal list yet, so the app source is POSIX only for now.
 
-macOS is verified end to end, on both transports and through both an isolated
-`aw-server --testing` and a real one: `scripts/install.sh`, the LaunchAgent it
-loads, live herdr snapshots in, correct events out. Linux and Windows are
-supported by design but have never been executed. Nothing longer than a short
-session has been measured, so the 12-hour run cap and the sleep/suspend gap
-handling rest on unit tests rather than on a real multi-day run.
+The TUI path is verified end to end on macOS, on both transports and through
+both an isolated `aw-server --testing` and a real one. The app path is verified
+on Linux against live herdr-app 0.1.12 and herdr-core 0.1.17 snapshots, not yet
+as a multi-day run. Windows has never been executed. Nothing longer than a
+short session has been measured, so the 12-hour run cap and the sleep/suspend
+gap handling rest on unit tests rather than on a real multi-day run.
+
+## Native app or TUI
+
+Herdr shipped a native app in autumn 2026. It is a separate program from the
+TUI: its own window (`herdr-app`), its own runtime (`herdr-core`, the `hc`
+CLI), its own sockets, and **no shared agents**. The TUI stays supported. The
+watcher therefore reads either, chosen per poll:
+
+- `source = "auto"` reads the native app whenever its window answers and the
+  TUI socket otherwise. It never merges the two: a TUI server left running
+  while you work in the app would otherwise report its idle workspace as your
+  attention all day.
+- `source = "app"` or `"socket"` forces one.
+
+Both land in the same buckets with the same fields, so your history continues
+across the switch. What differs:
+
+| | TUI | Native app |
+|---|---|---|
+| `app` (project) | workspace label | space name |
+| `tab` | tab label | tab name |
+| `agent` | `claude` | the program's own word, e.g. `claude-code`, `codex` |
+| `pane_id` | `w2:p1` | the app's pane id, or the terminal address (`t7`) for a sub-agent |
+| `done` clears when | you focus the tab | you look at the tab, on any Herdr client |
+| extra status | `unknown` (not recorded) | `error` (recorded, like `blocked`) |
+
+The app and its core disagree on `done`: the core keeps it until the program's
+next turn, the app flips it to `idle` the moment you look. The fleet bucket
+uses the app's reading, so `done` still measures how long finished work sat
+unnoticed. Sub-agents (terminals an agent started with `hc run`) and parked
+terminals have no pane but are still agent work: they are recorded in the tab
+of the pane that started them, under their terminal address, with `done`
+translated to `idle` since nobody "notices" a sub-agent. Terminals on remote
+machines the app has added keep their `machine/` prefixed ids and their
+remote `cwd`.
 
 ## How it works
 
 ```
    poll (2s)   ┌────────────────────────────────┐   heartbeat   ┌───────────┐
    ┌────────►  │      aw-watcher-herdr          │──────────────►│ aw-server │
-   │           │  herdr.py  session.snapshot    │   intervals   │   :5600   │
- herdr API     │  state.py  diff → transitions  │──────────────►└───────────┘
-   ◄───────────┤  emit.py   two bucket writers  │
-               └────────────────────────────────┘
+   │           │  app.py    status + ls + core  │   intervals   │   :5600   │
+ herdr-app     │  herdr.py  session.snapshot    │──────────────►└───────────┘
+ herdr-core    │  state.py  diff → transitions  │
+ herdr (TUI)   │  emit.py   two bucket writers  │
+   ◄───────────┴────────────────────────────────┘
 ```
 
 ## Buckets
@@ -203,7 +241,7 @@ why the [Queries](#queries) below exist.
 ### Check it is working
 
 ```bash
-aw-watcher-herdr --snapshot | head -3          # can it read herdr?
+aw-watcher-herdr --snapshot | head -3          # can it read herdr? ("source": "app" or the TUI's protocol number)
 tail -5 ~/Library/Logs/activitywatch/aw-watcher-herdr.log
 launchctl list | grep aw-watcher-herdr          # pid, and 0 as the last exit status
 curl -s "http://localhost:5600/api/0/buckets/aw-watcher-herdr_$(hostname)/events?limit=1"
@@ -248,8 +286,13 @@ events   = filter_period_intersect(events, not_afk);
 RETURN   = merge_events_by_keys(events, ["app", "title"]);
 ```
 
-`"Ghostty"` is what macOS calls it. Linux reports the WM_CLASS and Windows the
-executable name, so find yours with:
+`"Ghostty"` is what macOS calls the terminal the TUI runs in. The native app
+is its own window: `herdr-app` on Linux (the app_id), `Herdr` on macOS (from
+`Herdr.app`; not yet verified against aw-watcher-window). On Linux and
+Windows the default is empty (no window filter) because the TUI's terminal
+name is not known there; set `window_app = ["herdr-app", "<your terminal>"]`
+to narrow it. Linux reports the WM_CLASS and Windows the executable name, so
+find yours with:
 
 ```bash
 aw-watcher-herdr --detect-terminal
@@ -294,20 +337,23 @@ override the file.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `source` | `auto` | `auto`, `socket` or `cli`; anything else is a config error |
-| `socket_path` | `~/.config/herdr/herdr.sock` | herdr API socket (socket source); a leading `~` is expanded |
+| `source` | `auto` | `auto`, `app`, `socket` or `cli`; anything else is a config error |
+| `socket_path` | `~/.config/herdr/herdr.sock` | TUI API socket (socket source); a leading `~` is expanded |
+| `app_socket_path` | `$HERDR_APP_HOME/herdr-app.sock` | herdr-app window socket (app source); default follows `HERDR_APP_HOME` |
+| `core_socket_path` | `$XDG_RUNTIME_DIR/herdr-core/default.sock` | herdr-core socket (app source); default follows `HC_SOCKET`, `HC_SESSION` and the core's own fallbacks |
 | `herdr_binary` | `herdr` | Executable invoked by the CLI source |
 | `poll_interval` | `2.0` | Seconds between snapshots; must be greater than 0 |
 | `pulsetime` | `5.0` | Heartbeat merge window (attention bucket); must be greater than 0 |
 | `generic_terminal_label` | `terminal` | Title for panes with no agent |
 | `fleet_enabled` | `true` | Emit the agent-fleet bucket at all |
-| `fleet_statuses` | `["working", "blocked", "done"]` | Statuses that open a run; a bare string is accepted as a one-element list |
+| `fleet_statuses` | `["working", "blocked", "done", "error"]` | Statuses that open a run; a bare string is accepted as a one-element list |
 | `max_run_seconds` | `43200` | Hard cap on a single run; must be greater than 0 |
 | `gap_factor` | `3.0` | Multiple of `poll_interval` treated as a sleep gap; must be greater than 1 |
-| `window_app` | `["Ghostty"]` on macOS, `[]` elsewhere | Terminal names for `--print-query` |
+| `window_app` | `["Ghostty", "Herdr"]` on macOS, `[]` elsewhere (no filter) | Window names for `--print-query` |
 | `window_title` | unset | Optional title regex for `--print-query` |
 
-Flags: `--testing`, `--verbose`, `--source`, `--socket-path`, `--herdr-binary`,
+Flags: `--testing`, `--verbose`, `--source`, `--socket-path`,
+`--app-socket-path`, `--core-socket-path`, `--herdr-binary`,
 `--poll-interval`, `--pulsetime`, `--generic-terminal-label`, `--no-fleet`,
 `--snapshot`, `--detect-terminal`, `--print-query`.
 
@@ -324,7 +370,9 @@ make verify-cli   # the same, through the CLI source used on Windows
 
 | Symptom | Cause / fix |
 |---|---|
-| Permanent gap in the timeline | herdr is not running. That is recorded as an honest gap, not an error. |
+| Permanent gap in the timeline | Neither the Herdr app window nor the TUI is running. That is recorded as an honest gap, not an error. |
+| Attention shows one workspace all day while you work in the app | The watcher predates the app source, or `source` is pinned to `socket`: it is reading an idle TUI server. Upgrade, or set `source = "auto"`. |
+| `--snapshot` says `herdr-app ls: expected { do }, ...` | The app's control protocol changed. Check `herdr-app ls` by hand and file an issue. |
 | `another aw-watcher-herdr is already running` | Both launchd and aw-qt started it. Pick one route. |
 | No buckets created | aw-server is not reachable. Attention heartbeats are queued and flush on reconnect; fleet events are buffered in memory (up to 10 000) and retried. Ten consecutive failed retries log a warning, so a permanent failure (a deleted bucket, a rejected payload) does not stay silent. |
 | `--detect-terminal` says it cannot read from ActivityWatch | aw-server is not running. Start ActivityWatch (or `aw-server --testing` for a `--testing` run). |
@@ -345,8 +393,13 @@ LaunchAgent writing to a real aw-server, where a detached background agent reads
 herdr's socket and produces merged `currentwindow` attention events alongside
 overlapping `app.agent.activity` fleet events.
 
-Not verified: Linux and Windows, which are supported by design but have never
-been executed, and anything longer than a short session, so the run cap and the
+The native app source (2026-11) reads live herdr-app and herdr-core sockets on
+Linux and produces the same two buckets; the `source = "auto"` switch between
+app and TUI is unit-tested.
+
+Not verified: the app source on macOS (the `Herdr` window name and the core's
+state-dir socket are derived from herdr's source, not observed), Windows at
+all, and anything longer than a short session, so the run cap and the
 sleep/suspend gap handling rest on unit tests with a scripted clock rather than
 on a real multi-day run.
 

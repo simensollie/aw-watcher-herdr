@@ -15,7 +15,9 @@ def test_defaults_when_no_flags(monkeypatch):
     assert cfg.pulsetime == 5.0
     assert cfg.generic_terminal_label == "terminal"
     assert cfg.fleet_enabled is True
-    assert cfg.fleet_statuses == ["working", "blocked", "done"]
+    assert cfg.fleet_statuses == ["working", "blocked", "done", "error"]
+    assert cfg.app_socket_path is None
+    assert cfg.core_socket_path is None
     assert cfg.max_run_seconds == 43200.0
     assert cfg.gap_factor == 3.0
     assert cfg.socket_path is None
@@ -24,8 +26,12 @@ def test_defaults_when_no_flags(monkeypatch):
 
 def test_window_apps_default_is_platform_specific(monkeypatch):
     monkeypatch.setattr(cli.sys, "platform", "darwin")
-    assert cli.default_window_apps() == ["Ghostty"]
+    assert cli.default_window_apps() == ["Ghostty", "Herdr"]
+    # Linux: the app's name is known (herdr-app) but the TUI's terminal is
+    # not, so a filter of only the app would drop every TUI interval.
     monkeypatch.setattr(cli.sys, "platform", "linux")
+    assert cli.default_window_apps() == []
+    monkeypatch.setattr(cli.sys, "platform", "win32")
     assert cli.default_window_apps() == []
 
 

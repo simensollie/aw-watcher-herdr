@@ -18,8 +18,10 @@ from contextlib import contextmanager
 import pytest
 
 from aw_watcher_herdr import herdr as herdr_module
+from aw_watcher_herdr.app import AppSource
 from aw_watcher_herdr.herdr import (
-    CliSource, HerdrError, HerdrUnavailable, UnixSocketSource, resolve_source,
+    AutoSource, CliSource, HerdrError, HerdrUnavailable, UnixSocketSource,
+    resolve_source,
 )
 
 
@@ -137,10 +139,11 @@ def test_absolute_socket_path_is_left_alone(tmp_path):
 
 def test_resolve_source_expands_the_configured_socket_path(monkeypatch):
     monkeypatch.setattr(sys, "platform", "darwin")
-    config = FakeConfig()
-    config.socket_path = "~/.config/herdr/herdr.sock"
-    source = resolve_source(config)
-    assert source.socket_path == os.path.expanduser("~/.config/herdr/herdr.sock")
+    monkeypatch.setattr(herdr_module.os.path, "expanduser",
+                        lambda p: p.replace("~", "/Users/dev", 1))
+    source = resolve_source(FakeConfig(source="socket",
+                                       socket_path="~/.config/herdr/herdr.sock"))
+    assert source.socket_path == "/Users/dev/.config/herdr/herdr.sock"
 
 
 def test_socket_missing_path_raises_unavailable(tmp_path):
@@ -258,15 +261,23 @@ def test_invalid_request_error_is_not_unavailable():
 # --- source resolution ------------------------------------------------------
 
 class FakeConfig:
-    def __init__(self, source="auto"):
+    def __init__(self, source="auto", socket_path="/tmp/herdr.sock"):
         self.source = source
-        self.socket_path = "/tmp/herdr.sock"
+        self.socket_path = socket_path
+        self.app_socket_path = "/tmp/herdr-app.sock"
+        self.core_socket_path = "/tmp/herdr-core.sock"
         self.herdr_binary = "herdr"
 
 
-def test_auto_picks_the_socket_on_posix(monkeypatch):
+def test_auto_prefers_the_app_and_falls_back_to_the_tui_socket_on_posix(monkeypatch):
     monkeypatch.setattr(sys, "platform", "darwin")
-    assert isinstance(resolve_source(FakeConfig()), UnixSocketSource)
+    source = resolve_source(FakeConfig())
+    assert isinstance(source, AutoSource)
+    assert isinstance(source.primary, AppSource)
+    assert isinstance(source.fallback, UnixSocketSource)
+    assert source.primary.app_socket_path == "/tmp/herdr-app.sock"
+    assert source.primary.core_socket_path == "/tmp/herdr-core.sock"
+    assert source.fallback.socket_path == "/tmp/herdr.sock"
 
 
 def test_auto_picks_the_cli_on_windows(monkeypatch):
@@ -278,6 +289,40 @@ def test_auto_picks_the_cli_on_windows(monkeypatch):
 def test_explicit_source_overrides_the_platform(monkeypatch):
     monkeypatch.setattr(sys, "platform", "darwin")
     assert isinstance(resolve_source(FakeConfig("cli")), CliSource)
+    assert isinstance(resolve_source(FakeConfig("socket")), UnixSocketSource)
+    assert isinstance(resolve_source(FakeConfig("app")), AppSource)
+
+
+class ScriptedSource:
+    def __init__(self, *items):
+        self.items = list(items)
+
+    def snapshot(self):
+        item = self.items.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+
+def test_auto_source_falls_back_only_on_unavailable():
+    primary = ScriptedSource({"source": "app"}, HerdrUnavailable("closed"),
+                             HerdrError("garbage"))
+    fallback = ScriptedSource({"source": "tui"}, {"source": "tui"})
+    auto = AutoSource(primary, fallback)
+    assert auto.snapshot() == {"source": "app"}
+    # The app window closed: the TUI is read instead, on this very poll.
+    assert auto.snapshot() == {"source": "tui"}
+    # The app answering garbage is a fault to report, not a reason to read
+    # the TUI quietly instead.
+    with pytest.raises(HerdrError):
+        auto.snapshot()
+
+
+def test_auto_source_propagates_the_fallbacks_unavailable():
+    auto = AutoSource(ScriptedSource(HerdrUnavailable("no app")),
+                      ScriptedSource(HerdrUnavailable("no tui")))
+    with pytest.raises(HerdrUnavailable):
+        auto.snapshot()
 
 
 def test_unknown_source_raises():

@@ -160,7 +160,10 @@ def extract_attention(snapshot: dict) -> Attention | None:
 
 # --- fleet tracking ---------------------------------------------------------
 
-DEFAULT_FLEET_STATUSES = ("working", "blocked", "done")
+# `error` is herdr-core's fifth word (the TUI never reports it): the program
+# stopped on a fault and needs a person, which is `blocked` with a worse
+# reason, so it opens a run by default.
+DEFAULT_FLEET_STATUSES = ("working", "blocked", "done", "error")
 
 
 @dataclass(frozen=True)

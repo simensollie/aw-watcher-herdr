@@ -18,19 +18,28 @@ and no macOS Accessibility permission are needed.
 Two transports exist because herdr uses a Unix domain socket on macOS and Linux
 but a named pipe on Windows, where CPython exposes no socket.AF_UNIX. The CLI
 wrapper is the route herdr's own documentation recommends for plugins there.
-This module holds the only platform branch in the data path. Spec §4.3 permits
+This module holds the TUI's platform branch in the data path. Spec §4.3 permits
 two further sites: lock.py, and __main__.default_window_apps() as the third,
-which picks a display default rather than a transport.
+which picks a display default rather than a transport. app.py, the transport
+for the Herdr native app, is the same kind of site as this module.
+
+Since the native app (2026-10) there are two Herdr programs with no shared
+agents. `auto` therefore prefers the app whenever its window answers and
+falls back to the TUI otherwise (AutoSource), per poll: a running but idle
+TUI server must not be read while the person works in the app.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import socket
 import subprocess
 import sys
 from typing import Protocol
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_SOCKET_PATH = "~/.config/herdr/herdr.sock"
 DEFAULT_HERDR_BINARY = "herdr"
@@ -65,17 +74,20 @@ def _parse_envelope(raw, method: str) -> dict:
     Shared by both transports: herdr's CLI emits byte-for-byte the same
     envelope as the socket, so the error taxonomy must not diverge between them.
     """
-    if isinstance(raw, bytes):
-        raw = raw.decode("utf-8", "replace")
-    raw = (raw or "").strip()
-    if not raw:
-        raise HerdrError(f"{method}: herdr returned no response")
-    try:
-        msg = json.loads(raw)
-    except ValueError as exc:
-        raise HerdrError(f"{method}: malformed response: {exc}") from exc
-    if not isinstance(msg, dict):
-        raise HerdrError(f"{method}: response was not an object")
+    if isinstance(raw, dict):
+        msg = raw  # already decoded by _request_line
+    else:
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8", "replace")
+        raw = (raw or "").strip()
+        if not raw:
+            raise HerdrError(f"{method}: herdr returned no response")
+        try:
+            msg = json.loads(raw)
+        except ValueError as exc:
+            raise HerdrError(f"{method}: malformed response: {exc}") from exc
+        if not isinstance(msg, dict):
+            raise HerdrError(f"{method}: response was not an object")
 
     if "error" in msg:
         err = msg["error"] or {}
@@ -112,6 +124,51 @@ def _snapshot_from_result(result: dict) -> dict:
     return snap
 
 
+def request_line(path: str, payload: dict, timeout: float, what: str) -> dict:
+    """One JSON line out, one JSON object back, on a fresh Unix connection.
+
+    The TUI server, herdr-app and herdr-core all answer a plain-line request
+    this way, and a fresh connection per request makes reconnect-after-failure
+    the normal path rather than a special case. A connection failure is
+    HerdrUnavailable (the program is simply not running: a gap, not a fault);
+    everything after a successful connect is HerdrError. `what` names the
+    call in messages.
+    """
+    # AF_UNIX is referenced inside the function, never at module level: it
+    # does not exist on Windows and would break the import there.
+    if not hasattr(socket, "AF_UNIX"):
+        raise HerdrUnavailable(
+            f"{what}: this platform has no Unix sockets (herdr uses named "
+            f"pipes on Windows, which CPython cannot open)")
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(timeout)
+    try:
+        sock.connect(path)
+    except OSError as exc:
+        # Covers FileNotFoundError, ConnectionRefusedError and timeouts,
+        # all of which mean "herdr isn't there", not "herdr is broken".
+        sock.close()
+        raise HerdrUnavailable(f"{what}: cannot connect to {path}: {exc}") from exc
+    try:
+        with sock.makefile("rwb") as f:
+            f.write(json.dumps(payload).encode() + b"\n")
+            f.flush()
+            line = f.readline()
+    except OSError as exc:
+        raise HerdrError(f"{what}: socket error: {exc}") from exc
+    finally:
+        sock.close()
+    if not line:
+        raise HerdrError(f"{what}: herdr closed the connection without responding")
+    try:
+        msg = json.loads(line.decode("utf-8", "replace"))
+    except ValueError as exc:
+        raise HerdrError(f"{what}: malformed response: {exc}") from exc
+    if not isinstance(msg, dict):
+        raise HerdrError(f"{what}: response was not an object")
+    return msg
+
+
 class UnixSocketSource:
     """Connect-per-request client for the herdr API socket (macOS, Linux)."""
 
@@ -129,39 +186,12 @@ class UnixSocketSource:
     def request(self, method: str, params: dict | None = None) -> dict:
         """Send one request, return its `result` object."""
         self._seq += 1
-        payload = json.dumps({
+        msg = request_line(self.socket_path, {
             "id": f"aw-watcher-herdr:{self._seq}",
             "method": method,
             "params": params if params is not None else {},
-        })
-
-        # AF_UNIX is referenced inside the method, never at module level: it
-        # does not exist on Windows and would break the import there.
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(self.timeout)
-        try:
-            sock.connect(self.socket_path)
-        except OSError as exc:
-            # Covers FileNotFoundError, ConnectionRefusedError and timeouts,
-            # all of which mean "herdr isn't there", not "herdr is broken".
-            sock.close()
-            raise HerdrUnavailable(
-                f"cannot connect to {self.socket_path}: {exc}") from exc
-
-        try:
-            with sock.makefile("rwb") as f:
-                f.write(payload.encode() + b"\n")
-                f.flush()
-                line = f.readline()
-        except OSError as exc:
-            raise HerdrError(f"{method}: socket error: {exc}") from exc
-        finally:
-            sock.close()
-
-        if not line:
-            raise HerdrError(
-                f"{method}: herdr closed the connection without responding")
-        return _parse_envelope(line, method)
+        }, self.timeout, method)
+        return _parse_envelope(msg, method)
 
     def snapshot(self) -> dict:
         """Return the live session snapshot (spec §3)."""
@@ -217,14 +247,60 @@ class CliSource:
         return _snapshot_from_result(_parse_envelope(stdout, SNAPSHOT_METHOD))
 
 
+class AutoSource:
+    """Prefer `primary` (the native app) and fall back to `fallback` (the TUI)
+    whenever the primary is unavailable, re-deciding on every poll.
+
+    Only HerdrUnavailable triggers the fallback: the app answering with
+    garbage is a fault to report, not a reason to quietly read the TUI
+    instead. The fallback's own HerdrUnavailable propagates, which the loop
+    records as an honest gap.
+    """
+
+    def __init__(self, primary: SnapshotSource, fallback: SnapshotSource):
+        self.primary = primary
+        self.fallback = fallback
+        self._using: str | None = None
+
+    def _note(self, using: str) -> None:
+        if using != self._using:
+            logger.info("reading herdr via %s", using)
+            self._using = using
+
+    def snapshot(self) -> dict:
+        try:
+            snap = self.primary.snapshot()
+        except HerdrUnavailable:
+            snap = self.fallback.snapshot()
+            self._note(type(self.fallback).__name__)
+            return snap
+        self._note(type(self.primary).__name__)
+        return snap
+
+
 def resolve_source(config) -> SnapshotSource:
-    """Build the snapshot source the config asks for (spec §4.3)."""
+    """Build the snapshot source the config asks for (spec §4.3).
+
+    `auto` on POSIX reads the native app when it is open and the TUI
+    otherwise. On Windows it stays the CLI: herdr-core uses a named pipe
+    there, which CPython cannot open, so the app source is not available.
+    """
+    from .app import AppSource  # local: app.py imports this module's errors
+
     choice = (getattr(config, "source", "auto") or "auto").lower()
+    app_paths = (getattr(config, "app_socket_path", None),
+                 getattr(config, "core_socket_path", None))
     if choice == "auto":
-        choice = "cli" if sys.platform.startswith("win") else "socket"
+        if sys.platform.startswith("win"):
+            choice = "cli"
+        else:
+            return AutoSource(AppSource(*app_paths),
+                              UnixSocketSource(getattr(config, "socket_path", None)))
+    if choice == "app":
+        return AppSource(*app_paths)
     if choice == "socket":
         return UnixSocketSource(getattr(config, "socket_path", None))
     if choice == "cli":
         return CliSource(getattr(config, "herdr_binary", DEFAULT_HERDR_BINARY))
     raise ValueError(
-        f"unknown source {choice!r}; expected one of auto, socket, cli")
+        f"unknown source {choice!r}; expected one of auto, app, socket, cli")
